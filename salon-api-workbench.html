@@ -6,6 +6,7 @@
 <h1>门店业务 · 本机联调</h1><p>合成数据专用：页面 → HTTP → 真实业务处理器 → 临时 PostgreSQL。不是正式登录、真实收款或上线验收；不会导入旧原型数据。</p>
 <nav><button id="connect">连接本机测试环境</button><button id="retry" disabled>按原请求重试</button><button id="logout" disabled>退出本次测试会话</button></nav>
 <p id="status" role="status">请先运行 node scripts/salon-local-integration.cjs，并打开终端给出的地址。</p>
+<section><h2>刷新后的待核对请求</h2><p>仅保留本标签页的请求号与操作类型。重新连接后才能查看本人、本店清单；不会自动重发。关闭标签页或清除浏览器数据后的恢复尚未支持。</p><fieldset id="recoveryPanel" disabled><label>待核对请求<select id="recoveryRequest"></select></label><button id="lookupRequest">只读核对原请求</button></fieldset><p id="recoveryStatus" role="status" style="overflow-wrap:anywhere">请先连接并验证身份。</p></section>
 <fieldset id="panel" disabled>
 <p id="timeZone">门店时区未加载</p>
 <button id="refresh">刷新本店数据</button>

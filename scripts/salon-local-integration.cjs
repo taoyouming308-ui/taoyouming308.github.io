@@ -62,6 +62,7 @@ async function startServer(){
   const files={'/customer':'salon-customer-workbench.html','/packages/salon-core/customer-workbench.mjs':'packages/salon-core/customer-workbench.mjs','/':'salon-api-workbench.html','/packages/salon-core/api-client.mjs':'packages/salon-core/api-client.mjs','/packages/salon-core/session-controller.mjs':'packages/salon-core/session-controller.mjs','/packages/salon-core/workbench.mjs':'packages/salon-core/workbench.mjs'};
   files['/packages/salon-core/store-time.mjs']='packages/salon-core/store-time.mjs';
   files['/packages/salon-core/request-deadline.mjs']='packages/salon-core/request-deadline.mjs';
+  files['/packages/salon-core/recovery-journal.mjs']='packages/salon-core/recovery-journal.mjs';
   const allowed=new Set(['context','stores','customers','catalog','customer_create','order_create','order_lines','order_detail','booking_requests','booking_cancel_review','booking_reschedule','reschedule_requests','reschedule_review']);
   const customerAllowed=new Set(['context','bookings','reschedule_requests','reschedule_request']);
   allowed.add('store_time');customerAllowed.add('store_time');

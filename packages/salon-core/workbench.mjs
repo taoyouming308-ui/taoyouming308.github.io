@@ -1,11 +1,27 @@
 import {mapRows,serverId} from './api-client.mjs';
 import {createSalonSession} from './session-controller.mjs';
 import {withRequestDeadline} from './request-deadline.mjs';
+import {createRecoveryJournal,recoverableOperations} from './recovery-journal.mjs';
 import {instantToStoreInput,storeTimeToInstant,formatStoreInstant,storeTimeContext} from './store-time.mjs';
 let timeZone=null,timeVersion=null;
 const $=id=>document.getElementById(id);
 let client,customers=[],items=[],cancelRequests=[],rescheduleRequests=[],orderId=null,retry=null,viewRevision=0,signingOut=false,logoutUnconfirmed=false;
+let journalFault=false,running=false;
 const status=text=>{$('status').textContent=text;};
+const journal=()=>createRecoveryJournal(()=>sessionStorage,client.scope);
+function renderRecovery(){
+ const selected=$('recoveryRequest').value;$('recoveryRequest').replaceChildren(new Option('请选择',''));$('recoveryPanel').disabled=true;
+ if(!client?.scope){$('recoveryStatus').textContent='请先连接并验证身份。';return;}
+ try{
+  const rows=journal().list();
+  for(const row of rows)$('recoveryRequest').add(new Option(`${row.operation} · ${row.requestKey}`,row.requestKey));
+  if(rows.length===1)$('recoveryRequest').value=rows[0].requestKey;else $('recoveryRequest').value=selected;
+  if(rows.length||journalFault)$('panel').disabled=true;
+  $('recoveryPanel').disabled=signingOut||logoutUnconfirmed||!!retry||!rows.length||journalFault;
+  if(rows.length)$('recoveryStatus').textContent=retry?'原请求仍在本页，请先使用“按原请求重试”。':'发现待核对请求。请只读查询，不要重新开单。';
+  else if(!journalFault)$('recoveryStatus').textContent='本店暂无待核对请求。';
+ }catch(error){journalFault=true;$('panel').disabled=true;$('recoveryStatus').textContent=error.message;}
+}
 function options(id,rows,label){
  if(id==='changeRequest')$('changeDetails').textContent='选择申请后查看原时间、新时间与申请原因。';
  const select=$(id);select.replaceChildren(new Option('请选择',''));
@@ -31,23 +47,38 @@ async function verifyTimeZone(){
  if(!timeZone||current!==timeZone||result.data.timeVersion!==timeVersion)throw Error('门店时区已变化或未加载，请刷新本店数据后重新填写');
 }
 async function run(action){
+ if(running)return;
  if(signingOut||logoutUnconfirmed){status('退出未确认，请重试退出；禁止继续业务。');return;}
+ running=true;$('recoveryPanel').disabled=true;
  const epoch=viewRevision;
  $('panel').disabled=true;$('connect').disabled=true;$('retry').disabled=true;
  try{await action();}
  catch(error){if(epoch===viewRevision)status(`${error.message}${error.requestId?'\n追踪号：'+error.requestId:''}${retry?'\n当前原请求保留；请先重试核对，不要另建业务。':''}`);}
- finally{if(epoch===viewRevision){$('panel').disabled=!client?.scope||Boolean(retry);$('connect').disabled=Boolean(retry);$('retry').disabled=!retry;$('logout').disabled=!client?.scope;for(const id of ['rescheduleRequest','rescheduleStart','rescheduleBooking','changeRequest','approveChange','rejectChange'])$(id).disabled=!timeZone;}}
+ finally{running=false;if(epoch===viewRevision){$('panel').disabled=!client?.scope||Boolean(retry);$('connect').disabled=Boolean(retry);$('retry').disabled=!retry;$('logout').disabled=!client?.scope;for(const id of ['rescheduleRequest','rescheduleStart','rescheduleBooking','changeRequest','approveChange','rejectChange'])$(id).disabled=!timeZone;renderRecovery();}}
 }
 async function mutate(operation,fields,onSuccess){
+ if(journalFault||journal().list().length)throw Error('待核对清单未解决，禁止新建业务。');
  const ticket=client.prepare(operation,fields);
+ const tracked=recoverableOperations.includes(operation),pendingJournal=journal();
+ let hadUnknownResult=false;
+ if(tracked)try{pendingJournal.remember(ticket);}catch(error){journalFault=true;throw error;}
  retry=async()=>{
   let result;
   try{result=await client.submit(ticket);}catch(error){
-   // Confirmed validation/auth rejections did not commit; an unknown outcome remains locked.
-   if(error.code==='API_REJECTED'&&error.httpStatus>=400&&error.httpStatus<500)retry=null;
+   // A later rejection cannot prove an earlier unknown submission did not commit.
+   if(error.code==='API_REJECTED'&&error.httpStatus>=400&&error.httpStatus<500){
+    retry=null;if(tracked&&!hadUnknownResult)try{pendingJournal.acknowledge(ticket);}catch(e){journalFault=true;throw e;}
+   }else hadUnknownResult=true;
    throw error;
   }
+  if(tracked){
+   try{
+    const id=serverId(result.data?.[operation==='customer_create'?'customerId':'orderId']);
+    if(operation==='order_lines'&&id!==fields.orderId)throw Error('返回订单不匹配，请继续核对原请求。');
+   }catch(error){hadUnknownResult=true;throw error;}
+  }
   retry=null;
+  if(tracked)try{pendingJournal.acknowledge(ticket);}catch(error){journalFault=true;throw Error('写入已成功，但清单更新失败；请勿重复提交。'+error.message);}
   status(`已保存 · 请求号 ${result.requestId}`);
   try{await onSuccess(result.data);}catch(error){throw Error(`写入已经成功，请勿重复创建。后续回读失败：${error.message}；追踪号 ${result.requestId}`);}
  };
@@ -79,6 +110,7 @@ $('connect').onclick=()=>run(async()=>{
   if(reason==='DISPOSED')return;
   viewRevision++;clear();$('name').value='';options('store',[],()=>{});$('panel').disabled=true;$('retry').disabled=true;$('connect').disabled=signingOut||logoutUnconfirmed;
   status(logoutUnconfirmed?'退出未确认，请重试退出；禁止继续业务。':'会话已锁定，旧业务选择已清除；请重新连接。');
+  renderRecovery();
  }});
  await client.connect();
  const result=await client.read('stores');options('store',result.data.map(row=>({id:serverId(row.store_id),name:row.name})),row=>row.name);
@@ -106,6 +138,28 @@ $('saveLines').onclick=()=>run(async()=>{
  });
 });
 $('retry').onclick=()=>run(async()=>{if(retry)await retry();});
+$('lookupRequest').onclick=()=>run(async()=>{
+ if(retry||journalFault)throw Error('请先处理本页原请求或存储异常。');
+ const pendingJournal=journal(),ticket=pendingJournal.list().find(r=>r.requestKey===$('recoveryRequest').value);
+ if(!ticket)throw Error('请选择当前身份和门店的待核对请求。');
+ const result=(await client.read('request_lookup',{requestKey:ticket.requestKey,targetOperation:ticket.operation})).data;
+ if(result?.operation!==ticket.operation)throw Error('核对结果不匹配，原请求继续保留。');
+ if(result.status==='unconfirmed'){status('尚未确认结果，原请求保留；这不代表失败，禁止重新提交。');return;}
+ const expectedType=ticket.operation==='customer_create'?'customer':'order';
+ if(result.status!=='committed'||result.resourceType!==expectedType||typeof result.completedAt!=='string'||!Number.isFinite(Date.parse(result.completedAt)))throw Error('核对结果不完整，原请求继续保留。');
+ const id=serverId(result.resourceId);
+ let recoveredOrder;
+ if(expectedType==='order'){
+  recoveredOrder=(await client.read('order_detail',{orderId:id})).data;
+  if(serverId(recoveredOrder?.order?.id)!==id)throw Error('订单现状核对失败，原请求继续保留。');
+ }
+ await refresh();
+ if(expectedType==='customer'&&!customers.some(row=>row.id===id))throw Error('历史建档已完成，但当前列表未找到顾客，请人工核对；原请求保留。');
+ try{pendingJournal.acknowledge(ticket);}catch(error){journalFault=true;throw error;}
+ if(recoveredOrder){orderId=id;$('order').textContent=`已恢复订单 ${id} · 当前状态 ${recoveredOrder.order.status}`;$('saveLines').disabled=recoveredOrder.order.status!=='draft';}
+ else $('customer').value=String(id);
+ status('已核对原请求并读取当前记录，没有重新提交业务。');
+});
 $('refresh').onclick=()=>run(async()=>{await refresh();status('已刷新本店数据。');});
 $('changeRequest').onchange=()=>{$('changeDetails').textContent=$('changeRequest').value?$('changeRequest').selectedOptions[0].textContent:'请选择申请';};
 for(const [id,decision] of [['approveChange','approved'],['rejectChange','rejected']])$(id).onclick=()=>run(async()=>{
@@ -142,4 +196,4 @@ $('logout').onclick=async()=>{
  catch(error){status(error.message);$('logout').disabled=false;}
  finally{signingOut=false;$('connect').disabled=!completed;}
 };
-window.addEventListener('beforeunload',event=>{if(retry||logoutUnconfirmed){event.preventDefault();event.returnValue='';}});
+window.addEventListener('beforeunload',event=>{if(retry||logoutUnconfirmed||journalFault){event.preventDefault();event.returnValue='';}});
