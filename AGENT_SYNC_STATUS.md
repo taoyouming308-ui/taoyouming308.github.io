@@ -1,13 +1,15 @@
 # Agent Sync Status
 
-## v479 月报金额二级页一站式处理与单笔凭证开关（2026-09-08，待发布）
+## v479 月报金额二级页一站式处理与单笔凭证开关（2026-09-08，已发布）
 
 - 基于 GitHub main `347a79f`。App version: v479。
 - 财务从月报金额进入二级页后，可在同一位置修改可编辑金额、填写原因、保存及上传凭证；首页不再要求先进入整表编辑模式。
 - 凭证要求按“单笔业务记录”管理：可单独关闭或恢复一笔收入、开支、备用金、工资、采购、消耗、员工自购或历史正式账明细的凭证要求，不作用于整个格子或整个月。
 - 公式、合计、固定编号和已有来源汇总继续禁止直接改总数；历史月报使用仅允许替换 amount 的专用 RPC，锁账审批和一次性授权消费机制保持有效。
-- 新增迁移 `20260908023351_zysyr_monthly_cell_detail_workbench.sql`；新表开启并强制 RLS，写入 RPC 仅授予 service role，Edge Function 继续使用内部会话认证并必须保持 `verify_jwt=false`。
-- 本次不重导、不删除、不批量改写任何生产财务数据；部署前须完成迁移 dry-run、错误级 lint、完整回归、版本门禁与真实浏览器验证。
+- 生产迁移 `20260908023351_zysyr_monthly_cell_detail_workbench.sql` 已应用且本地/远端对齐；新表开启并强制 RLS，写入 RPC 仅授予 service role。
+- `operations-api` 已部署为 version 42、状态 `ACTIVE`，`verify_jwt=false` 保持不变；匿名请求返回 403“请重新登录”。
+- GitHub main 和恢复分支均已发布功能提交 `8c81b07`；Validate shared app 与 Pages 均成功，CDN 已核验 `version.txt=479`、`operations.html data-version=479` 及金额修改、逐笔凭证开关、历史金额修订入口。
+- 本次没有重导、删除或批量改写任何生产财务数据；迁移 dry-run、迁移对齐、错误级数据库 lint、完整发布门禁和桌面/手机浏览器交互回归均通过。
 
 ## v478 财务月报简化、手机横屏与历史凭证直传（2026-09-06，已发布）
 
