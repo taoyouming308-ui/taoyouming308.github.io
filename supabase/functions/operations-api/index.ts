@@ -888,7 +888,7 @@ function monthlyEvidencePolicyMap(cells: JsonRecord[], rules: JsonRecord[]): Rec
 }
 
 async function historicalMonthlyReport(companyId: string, storeId: string, month: string, storeName: string): Promise<JsonRecord | null> {
-  const entries = await historyMonthEntries(companyId, storeId, month, "monthly_profit_loss");
+  const entries = effectiveHistoryMonthlyEntries(await historyMonthEntries(companyId, storeId, month, "monthly_profit_loss"));
   if (!entries.length) return null;
   const batchId = cleanText(entries[0].import_batch_id, 40);
   const batches = await restRows(`zysyr_history_import_batches?select=id,source_filename,source_mime_type,source_size_bytes,source_sha256,source_bucket_id,source_object_path,created_by_user_id,created_at,confirmed_by_user_id,confirmed_at&company_id=eq.${companyId}&store_id=eq.${storeId}&id=eq.${batchId}&status=eq.completed&limit=1`);
@@ -1126,6 +1126,45 @@ async function reportAcknowledge(payload: JsonRecord, session: JsonRecord): Prom
 }
 
 
+
+// Derived values are computed on read; the immutable source and revisions stay intact.
+function effectiveHistoryMonthlyEntries(entries: JsonRecord[]): JsonRecord[] {
+  const rows = entries.map((entry) => ({ ...entry, current_payload: { ...(entry.current_payload as JsonRecord) } }));
+  const byAddress = new Map(rows.map((row) => [cleanText(row.current_payload.cell_address, 20).toUpperCase(), row]));
+  const values = new Map<string, number>();
+  const visiting = new Set<string>();
+  const changed = new Set<string>();
+  function evaluate(address: string): number | null {
+    if (values.has(address)) return values.get(address)!;
+    if (visiting.has(address)) return null;
+    const row = byAddress.get(address);
+    if (!row) return 0; // Empty Excel cells contribute zero.
+    const item = row.current_payload;
+    if (item.cell_kind !== "formula") {
+      const value = Number(item.amount);
+      if (!Number.isFinite(value)) return null;
+      if (Number((row.posted_payload as JsonRecord)?.amount) !== value) changed.add(address);
+      values.set(address, value); return value;
+    }
+    visiting.add(address);
+    const formula = cleanText(item.formula, 2000);
+    const refs = formulaPrecedents(formula, cleanText(row.source_sheet, 120));
+    let valid = !formula.includes("!") && !formula.includes("#REF!");
+    for (const ref of refs) { const value = evaluate(ref); if (value === null) valid = false; else values.set(ref, value); }
+    if (!refs.some((ref) => changed.has(ref))) {
+      visiting.delete(address);
+      const cached = Number(item.amount);
+      if (Number.isFinite(cached)) { values.set(address, cached); return cached; }
+      return null;
+    }
+    const value = valid ? safeFormulaValue(formula, refs, values) : null;
+    visiting.delete(address);
+    if (value !== null) { item.amount = value; values.set(address, value); changed.add(address); }
+    return value;
+  }
+  for (const address of byAddress.keys()) evaluate(address);
+  return rows;
+}
 
 function latestMonthlyCellRevisionMap(revisions: JsonRecord[]): Map<string, JsonRecord> {
   const latest = new Map<string, JsonRecord>();
@@ -2249,7 +2288,7 @@ async function historicalCellTrace(companyId: string, storeId: string, reportId:
   const batch = batches[0];
   if (!batch) throw new Error("月报不存在或无权访问");
   const month = cleanText((session as JsonRecord).__trace_month, 7);
-  const entries = await historyMonthEntries(companyId, storeId, month, "monthly_profit_loss");
+  const entries = effectiveHistoryMonthlyEntries(await historyMonthEntries(companyId, storeId, month, "monthly_profit_loss"));
   const entry = entries.find((row) => cleanText((row.current_payload as JsonRecord)?.cell_address, 20).toUpperCase() === address);
   if (!entry) throw new Error("该位置不是可追溯的历史金额或公式单元格");
   const current = entry.current_payload as JsonRecord;
@@ -2304,6 +2343,24 @@ async function historicalCellTrace(companyId: string, storeId: string, reportId:
       return { id: row.id, historical_ledger_entry_id: row.id, cell_address: item.cell_address, cell_kind: item.cell_kind,
         display_value: item.amount, numeric_value: item.amount, formula: item.formula, label: item.label, source_locator: row.source_locator };
     });
+    const byAddress = new Map(entries.map((row) => [cleanText((row.current_payload as JsonRecord)?.cell_address, 20).toUpperCase(), row]));
+    const seen = new Set<string>();
+    const leaves: JsonRecord[] = [];
+    function visit(ref: string): void {
+      if (seen.has(ref)) return;
+      seen.add(ref);
+      const row = byAddress.get(ref);
+      if (!row) return;
+      const item = row.current_payload as JsonRecord;
+      if (item.cell_kind === "formula") {
+        formulaPrecedents(cleanText(item.formula, 2000), cleanText(row.source_sheet, 120)).forEach(visit);
+      } else if (item.amount !== null && item.amount !== "" && Number.isFinite(Number(item.amount))) {
+        leaves.push({ id: row.id, historical_ledger_entry_id: row.id, cell_address: ref,
+          cell_kind: item.cell_kind, numeric_value: item.amount, label: item.label });
+      }
+    }
+    precedents.forEach(visit);
+    result.editable_components = leaves;
     return result;
   }
   const moduleEntries = await historyMonthEntries(companyId, storeId, month);

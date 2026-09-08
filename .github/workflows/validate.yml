@@ -49,6 +49,7 @@ jobs:
       - name: Protect ZYSYR operations dashboard
         run: |
           node scripts/test-operations.js
+          node scripts/test-monthly-formula-recalculation.js
           node scripts/test-operations-auth.js
           node scripts/test-operations-auth-migration.js
           node scripts/test-operations-auth-bridge.js
