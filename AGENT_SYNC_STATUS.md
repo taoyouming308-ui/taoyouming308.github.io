@@ -1,5 +1,13 @@
 # Agent Sync Status
 
+## Salon 退款审批与原支付核对（2026-09-08）
+
+- CLI 新建 20260908051941_salon_refund_review_workbench.sql：本店最小退款队列/原单支付详情、checked 审批函数；快照比较、双人分离、累计金额/次数防超退、固定锁序、service_role-only、分页及分配索引。refund_review API 必须 expectedSnapshot；旧内部审批函数保留、上线前仍须收敛。带请求号员工函数覆盖 45，不是模块数。
+- 页面：已有申请列表 → 详情核对 → 批准/拒绝 → 回读；接原键重试、最小请求清单及刷新只读核对，历史决定与当前状态分开，不自动重做。默认角色未开放权限，专测独立双人夹具。
+- 模型/API、最终全量 JS/MJS 与 PG/1280/390 专项通过，包括累计次卡分配及历史状态复测；现金收款、整单状态、刷新恢复及回读失败恢复回归通过。审批前后支付/订单/库存/会员/业绩无变化；手机截图已检查。
+- 按 Supabase/Postgres 技能采用最小权限/短事务/固定锁序/索引；本地 Advisor 默认实例未运行，未完成且未切生产。未新增申请/执行页面，不执行退款、退会员或返库；正式 Auth/Edge 未验收。
+- App version: v480。今日备份已确认，仅 feature/meiguanjia-parity-v1，不推 main、不部署、不合并原三个 App。详见 docs/salon-refund-review.md。
+
 ## Salon 现金版本化提交与原请求核对（2026-09-08）
 
 - 新迁移 20260908045658_salon_cash_checkout_versioned.sql 与 cash_checkout API。全额现金、锁单 CAS、固定库存锁序、支付/库存/审计/请求同事务；员工指纹覆盖计数增至 44（函数数，不是模块数）。旧 checkout 保留且未向本机页开放。

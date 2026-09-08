@@ -1,6 +1,6 @@
 // Per-tab metadata only. Storage contents never grant authorization or carry mutation payloads.
 import {serverId} from './api-client.mjs';
-export const recoverableOperations=Object.freeze(['customer_create','order_create','order_lines','order_status','cash_checkout']);
+export const recoverableOperations=Object.freeze(['customer_create','order_create','order_lines','order_status','cash_checkout','refund_review']);
 const invalid=()=>{throw Error('待核对清单损坏或存储不可用，请保留现场并人工核对，禁止新建业务。');};
 export function createRecoveryJournal(getStorage,scope){
  const key=`salon.pending.v1:${serverId(scope.organizationId)}:${serverId(scope.storeId)}:${serverId(scope.staffId)}`;

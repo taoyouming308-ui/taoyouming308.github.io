@@ -73,6 +73,8 @@ async function startServer(){
   allowed.add('orders');
   allowed.add('order_status');
   allowed.add('cash_checkout');
+  for(const op of ['refund_queue','refund_detail','refund_review'])allowed.add(op);
+  files['/packages/salon-core/refund-review.mjs']='packages/salon-core/refund-review.mjs';
   files['/packages/salon-core/cash-receipt.mjs']='packages/salon-core/cash-receipt.mjs';
   files['/packages/salon-core/order-flow.mjs']='packages/salon-core/order-flow.mjs';
   files['/packages/salon-core/cash-preview.mjs']='packages/salon-core/cash-preview.mjs';
