@@ -3,6 +3,7 @@ import {createSalonSession} from './session-controller.mjs';
 import {withRequestDeadline} from './request-deadline.mjs';
 import {createRecoveryJournal,recoverableOperations} from './recovery-journal.mjs';
 import {inspectOrder,renderOrderInspection} from './order-inspection.mjs';
+import {verifyOrderLines} from './order-readback.mjs';
 import {instantToStoreInput,storeTimeToInstant,formatStoreInstant,storeTimeContext} from './store-time.mjs';
 let timeZone=null,timeVersion=null;
 const $=id=>document.getElementById(id);
@@ -142,9 +143,10 @@ $('createOrder').onclick=()=>run(async()=>{
 });
 $('saveLines').onclick=()=>run(async()=>{
  const selected=items.find(row=>row.id===Number($('item').value));if(!selected||!orderId)throw Error('请选择本店商品并先创建草稿');
- await mutate('order_lines',{orderId,lines:[{catalogItemId:selected.id,quantity:1,unitPrice:selected.listPriceCents/100,discountAmount:0}]},async()=>{
+ const lines=[{catalogItemId:selected.id,quantity:1,unitPrice:selected.listPriceCents/100,discountAmount:0}];
+ await mutate('order_lines',{orderId,lines},async()=>{
   const result=await client.read('order_detail',{orderId});
-  if(serverId(result.data?.order?.id)!==orderId||!result.data.lines?.some(line=>serverId(line.catalog_item_id)===selected.id))throw Error('订单回读与保存对象不一致，请核对原订单');
+  verifyOrderLines(result.data,orderId,client.scope,lines);
   $('order').textContent=`订单 ${orderId} · 明细已从数据库读取确认`;
   $('saveLines').disabled=result.data.order.status!=='draft';
   status(`明细已保存并读取验证 · 追踪号 ${result.requestId}`);
