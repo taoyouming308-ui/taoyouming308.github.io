@@ -45,7 +45,7 @@ const {startServer}=require('./salon-local-integration.cjs');
   await page.locator('#createOrder').click();await page.getByText('订单已创建并读取确认。',{exact:true}).waitFor();
   const current=Number(app.sql('select max(id) from public.salon_orders')),seen=version(current);
   call(query(current,`version-other-${width}-01`,seen));const saved=snapshot(current);
-  await page.locator('#item').selectOption('1');await page.locator('#saveLines').click();await page.getByText(/订单版本已变化/).waitFor();
+  await page.locator('#item').selectOption('1');if(await page.locator('#draftRows article').count()===0)await page.locator('#addItem').click();await page.locator('#saveLines').click();await page.getByText(/订单版本已变化/).waitFor();
   assert.equal(writes.length,1);assert.equal(writes[0].expectedVersion,seen);assert.equal(snapshot(current),saved);
   assert.equal(await page.locator('#saveLines').isDisabled(),true);assert.equal(await page.locator('#retry').isDisabled(),true);
   assert.equal(await page.evaluate(()=>sessionStorage.getItem('salon.pending.v1:1:1:1')),null);await page.close();

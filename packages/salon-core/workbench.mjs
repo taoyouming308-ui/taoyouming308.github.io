@@ -4,12 +4,19 @@ import {withRequestDeadline} from './request-deadline.mjs';
 import {createRecoveryJournal,recoverableOperations} from './recovery-journal.mjs';
 import {inspectOrder,renderOrderInspection} from './order-inspection.mjs';
 import {verifyOrderLines} from './order-readback.mjs';
+import {createDraftEditor,renderDraftEditor} from './draft-editor.mjs';
 import {instantToStoreInput,storeTimeToInstant,formatStoreInstant,storeTimeContext} from './store-time.mjs';
 let timeZone=null,timeVersion=null;
 const $=id=>document.getElementById(id);
 let client,customers=[],items=[],cancelRequests=[],rescheduleRequests=[],orderId=null,retry=null,viewRevision=0,signingOut=false,logoutUnconfirmed=false;
 let journalFault=false,running=false;
 let orderVersion=null;
+const editor=createDraftEditor();
+function renderEditor(){
+ renderDraftEditor($('draftRows'),editor,renderEditor,error=>status(error.message));
+ $('draftSummary').textContent=`共 ${editor.rows.length} 项 · ${!editor.editable?'只读，不能保存':editor.dirty?'有未保存修改':'与最近读取记录一致'}`;
+ $('addItem').disabled=!editor.editable;$('saveLines').disabled=!editor.editable;
+}
 const status=text=>{$('status').textContent=text;};
 const journal=()=>createRecoveryJournal(()=>sessionStorage,client.scope);
 function renderRecovery(){
@@ -31,7 +38,7 @@ function options(id,rows,label){
  const select=$(id);select.replaceChildren(new Option('请选择',''));
  for(const row of rows)select.add(new Option(label(row),String(row.id)));
 }
-function clear(){timeZone=null;$('timeZone').textContent='门店时区未加载';options('changeRequest',[],()=>{});$('changeReason').value='';customers=[];items=[];cancelRequests=[];rescheduleRequests=[];orderId=null;orderVersion=null;retry=null;options('customer',[],()=>{});options('item',[],()=>{});options('cancelRequest',[],()=>{});options('rescheduleRequest',[],()=>{});$('rescheduleStart').value='';$('rescheduleReason').value='';$('cancelReason').value='';$('order').textContent='尚未创建订单';$('saveLines').disabled=true;}
+function clear(){editor.clear();renderEditor();timeZone=null;$('timeZone').textContent='门店时区未加载';options('changeRequest',[],()=>{});$('changeReason').value='';customers=[];items=[];cancelRequests=[];rescheduleRequests=[];orderId=null;orderVersion=null;retry=null;options('customer',[],()=>{});options('item',[],()=>{});options('cancelRequest',[],()=>{});options('rescheduleRequest',[],()=>{});$('rescheduleStart').value='';$('rescheduleReason').value='';$('cancelReason').value='';$('order').textContent='尚未创建订单';$('saveLines').disabled=true;}
 async function refresh(){
  timeZone=null;$('timeZone').textContent='正在读取门店时区';
  const config=await client.read('store_time');
@@ -70,7 +77,7 @@ async function mutate(operation,fields,onSuccess){
  retry=async()=>{
   let result;
   try{result=await client.submit(ticket);}catch(error){
-   if(operation==='order_lines'&&error.message.includes('订单版本已变化')){$('saveLines').disabled=true;orderVersion=null;}
+   if(operation==='order_lines'&&error.message.includes('订单版本已变化')){editor.lock();renderEditor();orderVersion=null;}
    // A later rejection cannot prove an earlier unknown submission did not commit.
    if(error.code==='API_REJECTED'&&error.httpStatus>=400&&error.httpStatus<500){
     retry=null;if(tracked&&!hadUnknownResult)try{pendingJournal.acknowledge(ticket);}catch(e){journalFault=true;throw e;}
@@ -93,6 +100,7 @@ async function mutate(operation,fields,onSuccess){
  await retry();
 }
 $('connect').onclick=()=>run(async()=>{
+ if(editor.dirty&&!confirm('重新连接会丢弃尚未保存的项目修改，是否继续？'))return;
  if(location.protocol!=='http:'||location.hostname!=='127.0.0.1')throw Error('仅允许专用本机测试服务，不能连接线上或直接打开文件');
  clear();client?.dispose();
  const session=await withRequestDeadline(async signal=>{
@@ -124,7 +132,7 @@ $('connect').onclick=()=>run(async()=>{
  const result=await client.read('stores');options('store',result.data.map(row=>({id:serverId(row.store_id),name:row.name})),row=>row.name);
  $('store').value=String(client.scope.storeId);await refresh();status('已连接临时数据库；所有操作只影响本次合成数据。');
 });
-$('store').onchange=()=>run(async()=>{const id=$('store').value;clear();if(!id){client.disconnect();return;}await client.connect(serverId(id));await refresh();status('已切换门店，旧选择已清除。');});
+$('store').onchange=()=>run(async()=>{const id=$('store').value;if(editor.dirty&&!confirm('切换门店会丢弃尚未保存的项目修改，是否继续？')){$('store').value=String(client.scope.storeId);return;}clear();if(!id){client.disconnect();return;}await client.connect(serverId(id));await refresh();status('已切换门店，旧选择已清除。');});
 $('createCustomer').onclick=()=>run(async()=>{
  const displayName=$('name').value.trim();if(!displayName)throw Error('请输入合成顾客姓名');
  await mutate('customer_create',{displayName,source:'other'},async data=>{
@@ -140,21 +148,24 @@ $('createOrder').onclick=()=>run(async()=>{
   const id=serverId(data.orderId),result=await client.read('order_detail',{orderId:id});
   if(serverId(result.data?.order?.id)!==id)throw Error('订单回读与创建对象不一致，请核对原订单');
   orderVersion=orderEditVersion(result.data.order.edit_version);orderId=id;$('order').textContent=`订单 ${id} · ${result.data.order.status}`;$('saveLines').disabled=result.data.order.status!=='draft';
+  editor.load(result.data,client.scope);renderEditor();
   status('订单已创建并读取确认。');
  });
 });
 $('saveLines').onclick=()=>run(async()=>{
- const selected=items.find(row=>row.id===Number($('item').value));if(!selected||!orderId)throw Error('请选择本店商品并先创建草稿');
- const lines=[{catalogItemId:selected.id,quantity:1,unitPrice:selected.listPriceCents/100,discountAmount:0}];
+ if(!orderId)throw Error('请先创建订单草稿');
+ const lines=editor.snapshot();
  await mutate('order_lines',{orderId,lines,expectedVersion:orderEditVersion(orderVersion)},async()=>{
   const result=await client.read('order_detail',{orderId});
   verifyOrderLines(result.data,orderId,client.scope,lines);
   orderVersion=orderEditVersion(result.data.order.edit_version);
+  editor.load(result.data,client.scope);renderEditor();
   $('order').textContent=`订单 ${orderId} · 明细已从数据库读取确认`;
-  $('saveLines').disabled=result.data.order.status!=='draft';
+  $('saveLines').disabled=!editor.editable;
   status(`明细已保存并读取验证 · 追踪号 ${result.requestId}`);
  });
 });
+$('addItem').onclick=()=>{try{editor.add(items.find(row=>row.id===Number($('item').value)));renderEditor();}catch(error){status(error.message);}};
 $('retry').onclick=()=>run(async()=>{if(retry)await retry();});
 $('inspectOrder').onclick=()=>run(async()=>{
  $('orderInspection').replaceChildren();
@@ -181,9 +192,11 @@ $('lookupRequest').onclick=()=>run(async()=>{
  }
  await refresh();
  if(expectedType==='customer'&&!customers.some(row=>row.id===id))throw Error('历史建档已完成，但当前列表未找到顾客，请人工核对；原请求保留。');
+ if(recoveredOrder)editor.load(recoveredOrder,client.scope);
  try{pendingJournal.acknowledge(ticket);}catch(error){journalFault=true;throw error;}
  if(recoveredOrder){orderVersion=orderEditVersion(recoveredOrder.order.edit_version);orderId=id;$('order').textContent=`已恢复订单 ${id} · 当前状态 ${recoveredOrder.order.status}`;$('saveLines').disabled=recoveredOrder.order.status!=='draft';}
  else $('customer').value=String(id);
+ renderEditor();
  status('已核对原请求并读取当前记录，没有重新提交业务。');
 });
 $('refresh').onclick=()=>run(async()=>{await refresh();status('已刷新本店数据。');});
@@ -217,9 +230,10 @@ for(const [id,decision] of [['approveCancel','approved'],['rejectCancel','reject
 });
 $('logout').onclick=async()=>{
  if(signingOut)return;
+ if(!logoutUnconfirmed&&editor.dirty&&!confirm('退出会丢弃尚未保存的项目修改，是否继续？'))return;
  signingOut=true;logoutUnconfirmed=true;let completed=false;$('logout').disabled=true;$('connect').disabled=true;
  try{await client.signOut();completed=true;logoutUnconfirmed=false;$('logout').disabled=true;status('已退出本次测试会话；旧请求不能继续提交。');}
  catch(error){status(error.message);$('logout').disabled=false;}
  finally{signingOut=false;$('connect').disabled=!completed;}
 };
-window.addEventListener('beforeunload',event=>{if(retry||logoutUnconfirmed||journalFault){event.preventDefault();event.returnValue='';}});
+window.addEventListener('beforeunload',event=>{if(retry||logoutUnconfirmed||journalFault||editor.dirty){event.preventDefault();event.returnValue='';}});

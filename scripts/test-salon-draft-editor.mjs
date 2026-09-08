@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import {createDraftEditor} from '../packages/salon-core/draft-editor.mjs';
+const scope={organizationId:1,storeId:2};
+const empty=()=>({order:{id:3,organization_id:1,store_id:2,order_no:'DRAFT',status:'draft',edit_version:0,subtotal:0,discount_total:0,payable_total:0},lines:[]});
+const item={id:7,...scope,name:'合成项目',status:'active',listPriceCents:1234};
+const editor=createDraftEditor();assert.throws(()=>editor.add(item));editor.load(empty(),scope);
+assert.equal(editor.dirty,false);assert.throws(()=>editor.snapshot());
+editor.add(item);editor.add(item);editor.setQuantity(1,'0.125');
+const frozen=editor.snapshot();assert.equal(frozen.length,2);assert.ok(Object.isFrozen(frozen)&&Object.isFrozen(frozen[0]));
+assert.equal(frozen[1].quantity,.125);editor.setQuantity(0,2);assert.equal(frozen[0].quantity,1);
+const original=JSON.stringify(editor.rows);
+for(const value of [0,-1,'1e2','1.0001','',null])assert.throws(()=>editor.setQuantity(0,value));
+assert.throws(()=>editor.add({...item,storeId:9}));assert.throws(()=>editor.add({...item,status:'disabled'}));
+assert.equal(JSON.stringify(editor.rows),original);editor.remove(1);assert.equal(editor.rows.length,1);
+const receipt=empty();receipt.order.edit_version=5;receipt.lines=[{id:4,organization_id:1,order_id:3,catalog_item_id:7,item_name:'历史快照',quantity:2,unit_price:10,discount_amount:15,line_total:5,staff_id:8,service_status:'pending'}];
+editor.load(receipt,scope);assert.equal(editor.dirty,false);assert.equal(editor.rows[0].name,'历史快照');
+assert.throws(()=>editor.setQuantity(0,1));editor.setQuantity(0,3);
+assert.deepEqual(editor.snapshot()[0],{catalogItemId:7,quantity:3,unitPrice:10,discountAmount:15,staffId:8});
+editor.lock();assert.throws(()=>editor.remove(0));assert.throws(()=>editor.snapshot());assert.equal(editor.rows.length,1);
+editor.load({...receipt,order:{...receipt.order,status:'paid'}},scope);assert.equal(editor.editable,false);
+for(const service_status of ['in_service','completed','cancelled']){editor.load({...receipt,lines:[{...receipt.lines[0],service_status}]},scope);assert.equal(editor.editable,false,'do not erase existing service state through replacement');}
+editor.load(empty(),scope);for(let i=0;i<100;i++)editor.add(item);assert.throws(()=>editor.add(item));
+editor.clear();assert.equal(editor.rows.length,0);assert.equal(editor.dirty,false);assert.equal(editor.editable,false);
+console.log('Draft editor passed: scoped catalog, full snapshots, duplicate lines, precision, original prices/discounts/staff, invalid-input no mutation, limit and lock/clear');

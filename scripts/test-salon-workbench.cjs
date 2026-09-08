@@ -30,7 +30,7 @@ const {startServer}=require('./salon-local-integration.cjs');
    assert.equal(app.sql(`select count(*) from public.salon_customers where id=${Number(customerId)};`),'1');
    await page.locator('#item').selectOption('1');await page.locator('#createOrder').click();
    await page.locator('#saveLines:not([disabled])').waitFor();await page.locator('#panel:not([disabled])').waitFor();
-   await page.locator('#saveLines').click();await page.getByText(/明细已从数据库读取确认/).waitFor();
+   if(await page.locator('#draftRows article').count()===0)await page.locator('#addItem').click();await page.locator('#saveLines').click();await page.getByText(/明细已从数据库读取确认/).waitFor();
    assert.equal(app.sql(`select payable_total from public.salon_orders where customer_id=${Number(customerId)};`),'12.34');
    await page.locator('#store').selectOption('2');await page.getByText('已切换门店，旧选择已清除。',{exact:true}).waitFor();
    assert.equal(await page.locator('#customer option').count(),1);assert.equal(await page.locator('#customer').inputValue(),'');

@@ -55,7 +55,7 @@ const {startServer}=require('./salon-local-integration.cjs');
   assert.equal(await page.locator('#customer option:checked').textContent(),`合成回读失败-${width}`);
   await verify('order_create','#createOrder','order_detail');
   await page.locator('#item').selectOption('1');
-  await verify('order_lines','#saveLines','order_detail');
+  if(await page.locator('#draftRows article').count()===0)await page.locator('#addItem').click();await verify('order_lines','#saveLines','order_detail');
   assert.equal(writes.length,3);assert.equal(await page.locator('#saveLines').isDisabled(),false);
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   assert.deepEqual(errors,[]);await page.close();
@@ -76,7 +76,7 @@ const {startServer}=require('./salon-local-integration.cjs');
   await page.locator('#customer').selectOption('1');await page.locator('#createOrder').click();
   await page.getByText('订单已创建并读取确认。',{exact:true}).waitFor();
   if(operation==='order_lines'){
-   await page.locator('#item').selectOption('1');await page.locator('#saveLines').click();
+   await page.locator('#item').selectOption('1');if(await page.locator('#draftRows article').count()===0)await page.locator('#addItem').click();await page.locator('#saveLines').click();
    await page.getByText(/明细已保存并读取验证/).waitFor();
   }else assert.match(await page.locator('#order').textContent(),/opened/);
   await page.locator('#panel:not([disabled])').waitFor();

@@ -23,7 +23,7 @@ export function renderOrderInspection(container,record){
  add('h3',`订单 ${record.number} · 内部编号 ${record.id}`);
  add('p',`当前状态：${record.status}`);
  add('p',`项目小计 ${record.subtotal} · 优惠 ${record.discount} · 应收 ${record.payable}`);
- add('p','以上为订单应收，不是实收、会员余额或支付凭证。查询不会修改订单，也不会把原单加载到单项编辑器。');
+ add('p','以上为订单应收，不是实收、会员余额或支付凭证。查询不会修改订单，也不会把原单加载到编辑器。');
  if(!record.lines.length)add('p','暂无项目明细。');
  for(const line of record.lines){
   add('h4',`${line.name} · 明细 ${line.id}`);

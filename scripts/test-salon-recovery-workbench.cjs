@@ -30,7 +30,7 @@ const {startServer}=require('./salon-local-integration.cjs');
   await page.locator('#name').fill(`合成恢复顾客-${width}`);await recover('customer_create','#createCustomer');
   assert.equal(await page.locator('#customer option:checked').textContent(),`合成恢复顾客-${width}`);
   await recover('order_create','#createOrder');assert.match(await page.locator('#order').textContent(),/已恢复订单.*draft/);
-  await page.locator('#item').selectOption('1');await recover('order_lines','#saveLines');
+  await page.locator('#item').selectOption('1');if(await page.locator('#draftRows article').count()===0)await page.locator('#addItem').click();await recover('order_lines','#saveLines');
   assert.equal(writes.length,3);assert.equal(await page.locator('#saveLines').isDisabled(),width===390);
   if(width===390){assert.match(await page.locator('#order').textContent(),/opened/);await page.screenshot({path:'/private/tmp/salon-recovery-mobile.png',fullPage:true});}
   // Unknown receipt remains blocked across refresh; malformed receipts cannot dismiss it.

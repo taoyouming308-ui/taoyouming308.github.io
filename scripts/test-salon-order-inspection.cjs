@@ -17,7 +17,7 @@ const {startServer}=require('./salon-local-integration.cjs');
   await page.goto(app.url);await connect();await page.locator('#name').fill(`合成查询-${width}`);await page.locator('#createCustomer').click();
   await page.getByText('顾客已建档并读取确认。',{exact:true}).waitFor();await page.locator('#createOrder').click();await page.getByText('订单已创建并读取确认。',{exact:true}).waitFor();
   const id=Number(app.sql('select max(id) from public.salon_orders'));
-  await page.locator('#item').selectOption('1');await page.locator('#saveLines').click();await page.getByText(/明细已保存并读取验证/).waitFor();
+  await page.locator('#item').selectOption('1');if(await page.locator('#draftRows article').count()===0)await page.locator('#addItem').click();await page.locator('#saveLines').click();await page.getByText(/明细已保存并读取验证/).waitFor();
   // Synthetic text snapshot is deliberately HTML-like; only text may be rendered.
   app.sql(`update public.salon_order_lines set item_name='<img src=x onerror=alert(1)>' where order_id=${id}`);
   const snapshot=()=>app.sql(`select jsonb_build_object('orders',(select jsonb_agg(o) from public.salon_orders o),'lines',(select jsonb_agg(l) from public.salon_order_lines l))`);

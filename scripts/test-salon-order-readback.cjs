@@ -22,7 +22,7 @@ const {startServer}=require('./salon-local-integration.cjs');
   await page.locator('#name').fill(`合成整单核对-${width}`);await page.locator('#createCustomer').click();await page.getByText('顾客已建档并读取确认。',{exact:true}).waitFor();
   await page.locator('#createOrder').click();await page.getByText('订单已创建并读取确认。',{exact:true}).waitFor();
   for(const mode of ['quantity','extra']){
-   await page.locator('#item').selectOption('1');distort=mode;await page.locator('#saveLines').click();
+   await page.locator('#item').selectOption('1');distort=mode;if(await page.locator('#draftRows article').count()===0)await page.locator('#addItem').click();await page.locator('#saveLines').click();
    await page.getByText(/订单回读明细与本次提交不一致/).waitFor();
    assert.equal(await page.locator('#retry').isDisabled(),true);
    assert.equal(await page.locator('#createOrder').isDisabled(),true);
