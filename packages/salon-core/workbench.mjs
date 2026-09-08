@@ -6,6 +6,7 @@ import {inspectOrder,renderOrderInspection} from './order-inspection.mjs';
 import {verifyOrderLines} from './order-readback.mjs';
 import {createDraftEditor,renderDraftEditor} from './draft-editor.mjs';
 import {orderStates,orderPage,renderOrderPage} from './order-list.mjs';
+import {orderFlow,renderOrderFlow} from './order-flow.mjs';
 import {instantToStoreInput,storeTimeToInstant,formatStoreInstant,storeTimeContext} from './store-time.mjs';
 let timeZone=null,timeVersion=null;
 const $=id=>document.getElementById(id);
@@ -13,6 +14,9 @@ let client,customers=[],items=[],cancelRequests=[],rescheduleRequests=[],orderId
 let journalFault=false,running=false;
 let orderVersion=null;
 const editor=createDraftEditor();
+let loadedFlow=null;
+function hydrateEditor(data,scope){const next=orderFlow(data,scope);editor.load(data,scope);loadedFlow=next;}
+function resetEditor(){editor.clear();loadedFlow=null;}
 let nextOrderId=null,listedStatus='';
 for(const [value,label] of Object.entries(orderStates))$('orderFilter').add(new Option(label,value));
 function clearOrderList(){nextOrderId=null;$('orderList').replaceChildren();$('nextOrders').disabled=true;$('orderListStatus').textContent='请查询本店订单。';}
@@ -22,7 +26,7 @@ async function loadOrderList(beforeId=null){
  const result=await client.read('orders',{status:filter,beforeId});
  const page=orderPage(result.data,client.scope,{status:filter,beforeId});
  listedStatus=filter;nextOrderId=page.nextBeforeId;
- renderOrderPage($('orderList'),page,id=>selectOrder(id,false),id=>selectOrder(id,true));
+ renderOrderPage($('orderList'),page,id=>selectOrder(id,false),id=>selectOrder(id,true),id=>selectOrder(id,'process'));
  $('nextOrders').disabled=nextOrderId===null;
  $('orderListStatus').textContent=`本页 ${page.rows.length} 单 · ${nextOrderId===null?'已到末页':'还有更早订单'} · 按内部编号倒序，状态不是实时更新`;
 }
@@ -33,14 +37,15 @@ function selectOrder(id,edit){return run(async()=>{
  const record=inspectOrder(result.data,id,client.scope);
  if(edit){
   const candidate=createDraftEditor();candidate.load(result.data,client.scope);
-  if(!candidate.editable)throw Error('该订单当前不能编辑：仅允许草稿且所有明细待服务。请查看最新状态。');
+  if(edit===true&&!candidate.editable)throw Error('该订单当前不能编辑：仅允许草稿且所有明细待服务。请查看最新状态。');
   const version=orderEditVersion(result.data.order.edit_version);
-  editor.load(result.data,client.scope);orderId=id;orderVersion=version;renderEditor();
-  $('order').textContent=`当前编辑订单 ${record.number} · 编号 ${id} · 草稿`;
-  status('已重新读取并载入草稿；保存时仍校验版本，尚未写入业务。');
+  hydrateEditor(result.data,client.scope);orderId=id;orderVersion=version;renderEditor();
+  $('order').textContent=`当前编辑订单 ${record.number} · 编号 ${id} · ${record.status}`;
+  status(edit===true?'已重新读取并载入草稿；保存时仍校验版本，尚未写入业务。':'已载入订单处理，尚未修改状态或收款。');
  }else{renderOrderInspection($('orderInspection'),record);status('原单已只读查询；未修改订单或当前编辑对象。');}
 });}
 function renderEditor(){
+ renderOrderFlow($('orderFlow'),loadedFlow,editor.dirty||orderVersion===null,advanceOrder);
  renderDraftEditor($('draftRows'),editor,renderEditor,error=>status(error.message));
  $('draftSummary').textContent=`共 ${editor.rows.length} 项 · ${!editor.editable?'只读，不能保存':editor.dirty?'有未保存修改':'与最近读取记录一致'}`;
  $('addItem').disabled=!editor.editable;$('saveLines').disabled=!editor.editable;
@@ -66,7 +71,7 @@ function options(id,rows,label){
  const select=$(id);select.replaceChildren(new Option('请选择',''));
  for(const row of rows)select.add(new Option(label(row),String(row.id)));
 }
-function clear(){clearOrderList();editor.clear();renderEditor();timeZone=null;$('timeZone').textContent='门店时区未加载';options('changeRequest',[],()=>{});$('changeReason').value='';customers=[];items=[];cancelRequests=[];rescheduleRequests=[];orderId=null;orderVersion=null;retry=null;options('customer',[],()=>{});options('item',[],()=>{});options('cancelRequest',[],()=>{});options('rescheduleRequest',[],()=>{});$('rescheduleStart').value='';$('rescheduleReason').value='';$('cancelReason').value='';$('order').textContent='尚未创建订单';$('saveLines').disabled=true;}
+function clear(){clearOrderList();resetEditor();renderEditor();timeZone=null;$('timeZone').textContent='门店时区未加载';options('changeRequest',[],()=>{});$('changeReason').value='';customers=[];items=[];cancelRequests=[];rescheduleRequests=[];orderId=null;orderVersion=null;retry=null;options('customer',[],()=>{});options('item',[],()=>{});options('cancelRequest',[],()=>{});options('rescheduleRequest',[],()=>{});$('rescheduleStart').value='';$('rescheduleReason').value='';$('cancelReason').value='';$('order').textContent='尚未创建订单';$('saveLines').disabled=true;}
 async function refresh(){
  clearOrderList();
  timeZone=null;$('timeZone').textContent='正在读取门店时区';
@@ -107,7 +112,7 @@ async function mutate(operation,fields,onSuccess){
  retry=async()=>{
   let result;
   try{result=await client.submit(ticket);}catch(error){
-   if(operation==='order_lines'&&error.message.includes('订单版本已变化')){editor.lock();renderEditor();orderVersion=null;}
+   if(['order_lines','order_status'].includes(operation)&&error.message.includes('订单版本已变化')){editor.lock();orderVersion=null;renderEditor();}
    // A later rejection cannot prove an earlier unknown submission did not commit.
    if(error.code==='API_REJECTED'&&error.httpStatus>=400&&error.httpStatus<500){
     retry=null;if(tracked&&!hadUnknownResult)try{pendingJournal.acknowledge(ticket);}catch(e){journalFault=true;throw e;}
@@ -117,7 +122,8 @@ async function mutate(operation,fields,onSuccess){
   if(tracked){
    try{
     const id=serverId(result.data?.[operation==='customer_create'?'customerId':'orderId']);
-    if(operation==='order_lines'&&id!==fields.orderId)throw Error('返回订单不匹配，请继续核对原请求。');
+    if(['order_lines','order_status'].includes(operation)&&id!==fields.orderId)throw Error('返回订单不匹配，请继续核对原请求。');
+    if(operation==='order_status'&&result.data.status!==fields.status)throw Error('返回状态不匹配，请继续核对原请求。');
    }catch(error){hadUnknownResult=true;throw error;}
   }
   retry=null;
@@ -178,7 +184,7 @@ $('createOrder').onclick=()=>run(async()=>{
   const id=serverId(data.orderId),result=await client.read('order_detail',{orderId:id});
   if(serverId(result.data?.order?.id)!==id)throw Error('订单回读与创建对象不一致，请核对原订单');
   orderVersion=orderEditVersion(result.data.order.edit_version);orderId=id;$('order').textContent=`订单 ${id} · ${result.data.order.status}`;$('saveLines').disabled=result.data.order.status!=='draft';
-  editor.load(result.data,client.scope);renderEditor();
+  hydrateEditor(result.data,client.scope);renderEditor();
   status('订单已创建并读取确认。');
  });
 });
@@ -189,7 +195,7 @@ $('saveLines').onclick=()=>run(async()=>{
   const result=await client.read('order_detail',{orderId});
   verifyOrderLines(result.data,orderId,client.scope,lines);
   orderVersion=orderEditVersion(result.data.order.edit_version);
-  editor.load(result.data,client.scope);renderEditor();
+  hydrateEditor(result.data,client.scope);renderEditor();
   $('order').textContent=`订单 ${orderId} · 明细已从数据库读取确认`;
   $('saveLines').disabled=!editor.editable;
   status(`明细已保存并读取验证 · 追踪号 ${result.requestId}`);
@@ -197,12 +203,25 @@ $('saveLines').onclick=()=>run(async()=>{
 });
 $('addItem').onclick=()=>{try{editor.add(items.find(row=>row.id===Number($('item').value)));renderEditor();}catch(error){status(error.message);}};
 $('retry').onclick=()=>run(async()=>{if(retry)await retry();});
+function advanceOrder(target,label){return run(async()=>{
+ if(!loadedFlow||loadedFlow.id!==orderId||orderVersion===null||editor.dirty||!loadedFlow.actions.includes(target))throw Error('当前订单不能执行该状态操作，请先保存或重新载入核对。');
+ if(!confirm(`订单 ${loadedFlow.number}：${label}？只修改整单状态，不代表项目完成或已收款。`))return;
+ const id=orderId;
+ await mutate('order_status',{orderId:id,status:target,reason:'本机整单状态确认',expectedVersion:orderEditVersion(orderVersion)},async()=>{
+  const result=await client.read('order_detail',{orderId:id});
+  inspectOrder(result.data,id,client.scope);
+  if(result.data.order.status!==target)throw Error('订单现状与提交目标不同，请只读核对原请求');
+  hydrateEditor(result.data,client.scope);orderVersion=orderEditVersion(result.data.order.edit_version);renderEditor();
+  $('order').textContent=`订单 ${id} · ${loadedFlow.status}`;
+  status('订单状态已保存并读取确认；未收款、未扣会员或自动完成明细。');
+ });
+});}
 $('listOrders').onclick=()=>run(()=>loadOrderList());
 $('nextOrders').onclick=()=>run(async()=>{if(nextOrderId!==null&&listedStatus===$('orderFilter').value)await loadOrderList(nextOrderId);});
 $('orderFilter').onchange=clearOrderList;
 $('leaveDraft').onclick=()=>run(async()=>{
  if(editor.dirty&&!confirm('离开编辑会丢弃未保存的项目修改，是否继续？'))return;
- editor.clear();orderId=null;orderVersion=null;renderEditor();$('order').textContent='尚未创建订单';
+ resetEditor();orderId=null;orderVersion=null;renderEditor();$('order').textContent='尚未创建订单';
  status('已离开编辑，数据库订单未删除；可从列表重新载入或新建草稿。');
 });
 $('inspectOrder').onclick=()=>run(async()=>{
@@ -230,7 +249,7 @@ $('lookupRequest').onclick=()=>run(async()=>{
  }
  await refresh();
  if(expectedType==='customer'&&!customers.some(row=>row.id===id))throw Error('历史建档已完成，但当前列表未找到顾客，请人工核对；原请求保留。');
- if(recoveredOrder)editor.load(recoveredOrder,client.scope);
+ if(recoveredOrder)hydrateEditor(recoveredOrder,client.scope);
  try{pendingJournal.acknowledge(ticket);}catch(error){journalFault=true;throw error;}
  if(recoveredOrder){orderVersion=orderEditVersion(recoveredOrder.order.edit_version);orderId=id;$('order').textContent=`已恢复订单 ${id} · 当前状态 ${recoveredOrder.order.status}`;$('saveLines').disabled=recoveredOrder.order.status!=='draft';}
  else $('customer').value=String(id);

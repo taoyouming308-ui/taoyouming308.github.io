@@ -15,7 +15,7 @@ for(const [name,source] of definitions){
  assert.doesNotMatch(source,/:=salon_private\.claim_request\(/);
  covered++;
 }
-assert.equal(covered,42,'all current employee request-key mutations must be guarded');
+assert.equal(covered,43,'all current employee request-key mutations must be guarded');
 for(const name of ['salon_create_role','salon_list_payroll']){
  const source=definitions.get(name);assert.match(source,/a\.effective_from<=current_date/);assert.match(source,/a\.effective_to>=current_date/);
 }

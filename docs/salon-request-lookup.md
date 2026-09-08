@@ -4,7 +4,9 @@
 
 ## 支持范围
 
-员工 API 新增 `request_lookup`，输入 `storeId`、原 `requestKey`、`targetOperation`。仅支持 `customer_create`、`order_create`、`order_lines`，不支持顾客端、收银、退款、充值或批量搜索。
+员工 API 新增 `request_lookup`，输入 `storeId`、原 `requestKey`、`targetOperation`。现支持 `customer_create`、`order_create`、`order_lines`、`order_status`，不支持顾客端、收银、退款、充值或批量搜索。
+
+2026-09-08 扩展整单状态回执及同标签页清单，后文“三类”指最初批次；新增状态的提交、回读和刷新核对范围见 `salon-order-flow.md`。覆盖数现为 43 个带请求号员工函数，包含旧兼容入口，不是业务模块数。
 
 身份由现有 API 验证并解析实际员工/组织/所选门店；忽略客户端伪造身份参数。数据库要求当前门店相应资源的 read 和 write 权限，并精确匹配原员工、原组织、原店、原请求号和操作类型。曾经有权限不等于现在有权限。
 

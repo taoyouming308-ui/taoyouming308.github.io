@@ -12,14 +12,14 @@ export function orderPage(data,scope,{status='',beforeId=null}={}){
  if(data.nextBeforeId!==null&&(rows.length!==50||serverId(data.nextBeforeId)!==last))bad();
  return Object.freeze({rows:Object.freeze(rows),nextBeforeId:data.nextBeforeId});
 }
-export function renderOrderPage(container,page,onView,onEdit){
+export function renderOrderPage(container,page,onView,onEdit,onProcess){
  const doc=container.ownerDocument,fragment=doc.createDocumentFragment();
  if(!page.rows.length){const p=doc.createElement('p');p.textContent='本页没有匹配订单。';fragment.append(p);}
  for(const row of page.rows){
   const item=doc.createElement('article');item.style.overflowWrap='anywhere';item.dataset.orderId=String(row.id);
   const title=doc.createElement('p');title.textContent=`${row.number} · ${orderStates[row.status]} · 编号 ${row.id}`;item.append(title);
   const nav=doc.createElement('nav');
-  for(const [label,action] of [['查看',onView],...(row.status==='draft'?[['载入草稿编辑',onEdit]]:[])]){
+  for(const [label,action] of [['查看',onView],...(row.status==='draft'?[['载入草稿编辑',onEdit]]:[]),...(onProcess&&['opened','in_service','awaiting_payment'].includes(row.status)?[['载入订单处理',onProcess]]:[])]){
    const button=doc.createElement('button');button.textContent=label;button.onclick=()=>action(row.id);nav.append(button);
   }
   item.append(nav);fragment.append(item);

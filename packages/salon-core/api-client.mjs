@@ -32,7 +32,7 @@ export function mapRows(resource, rows, scope) {
   });
 }
 const reads = new Set(['context', 'stores', 'customers', 'catalog', 'orders', 'order_detail', 'booking_requests', 'reschedule_requests', 'store_time', 'request_lookup']);
-const writes = new Set(['customer_create', 'order_create', 'order_lines', 'booking_cancel_review', 'booking_reschedule', 'reschedule_review']);
+const writes = new Set(['customer_create', 'order_create', 'order_lines', 'order_status', 'booking_cancel_review', 'booking_reschedule', 'reschedule_review']);
 export function createSalonClient({ endpoint, getAccessToken, fetchImpl = globalThis.fetch, makeKey = () => crypto.randomUUID(), onAuthFailure = () => {}, requestTimeoutMs = 30000 }) {
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 120000)
     fail('INVALID_TIMEOUT', '请求等待时间必须在 1—120000 毫秒之间');

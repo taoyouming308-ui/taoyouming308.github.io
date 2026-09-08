@@ -10,6 +10,7 @@
 <fieldset id="panel" disabled>
 <p id="timeZone">门店时区未加载</p>
 <button id="refresh">刷新本店数据</button>
+<section><h2>整单状态处理</h2><div id="orderFlow" aria-live="polite">请先创建订单，或从列表载入订单处理。</div><p>先保存草稿项目，再确认开单。状态操作只作用于整张订单，不自动改变各项目服务状态；本页不提供取消、退款、支付或会员扣款。</p></section>
 <section><h2>本店订单</h2><label>订单状态<select id="orderFilter"><option value="">全部状态</option></select></label><nav><button id="listOrders">查询／返回最新一页</button><button id="nextOrders" disabled>下一页（更早）</button><button id="leaveDraft">离开当前编辑</button></nav><p id="orderListStatus">请查询本店订单。</p><p>每页最多 50 单，仅当前授权门店；不展示顾客隐私或支付金额。查看不改变编辑对象，载入草稿会重新读取最新记录。翻页期间状态可能变化，刷新可重新查询。</p><div id="orderList" aria-live="polite"></div></section>
 <section><h2>原单查询（只读）</h2><label>订单内部编号<input id="inspectOrderId" inputmode="numeric" maxlength="16" autocomplete="off" placeholder="输入已知订单的整数 ID，不是业务单号"></label><button id="inspectOrder">查询原单</button><p>仅查询当前授权门店。结果不是实时订阅，状态可能随后变化；存在待核对写入时，请先处理上方原请求。</p><div id="orderInspection" aria-live="polite" style="overflow-wrap:anywhere"></div></section>
 <section><h2>顾客改期申请复核</h2><label>本店待处理申请<select id="changeRequest"></select></label><p id="changeDetails" style="overflow-wrap:anywhere">选择申请后查看原时间、新时间与申请原因。</p><label>复核原因<input id="changeReason" maxlength="500" autocomplete="off"></label><nav><button id="approveChange">批准改期</button><button id="rejectChange">拒绝改期</button></nav><p>待处理期间保留原档期，批准时重新检查冲突。<a href="/customer" target="_blank" rel="noopener" style="color:#c3eab2">打开独立合成顾客测试页</a></p></section>
