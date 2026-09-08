@@ -1,4 +1,5 @@
 const OPERATIONS={
+  orders:{rpc:'salon_list_orders'},
   request_lookup:{rpc:'salon_lookup_staff_request'},
   store_time:{rpc:'salon_get_store_time_context'},
   reschedule_review:{rpc:'salon_review_reschedule_with_time'},reschedule_requests:{rpc:'salon_list_reschedule_requests'},
@@ -51,7 +52,12 @@ export function createSalonHandler(deps){return async function(request){
     if(operation==='members')return finish(200,{data:await deps.read('members',{actorStaffId:common.p_actor_staff_id,organizationId:common.p_organization_id,storeId:common.p_store_id,customerId:integer(payload.customerId,'顾客',true),status:text(payload.status,20),limit:Math.min(integer(payload.limit||200,'数量'),500)})});
     if(operation==='refunds')return finish(200,{data:await deps.read('refunds',{actorStaffId:common.p_actor_staff_id,organizationId:common.p_organization_id,storeId:common.p_store_id,status:text(payload.status,20),limit:Math.min(integer(payload.limit||200,'数量'),500)})});
     let args;
-    if(operation==='request_lookup'){
+    if(operation==='orders'){
+      const state=payload.status??'';
+      if(typeof state!=='string'||!['','draft','opened','in_service','awaiting_payment','paid','cancelled','reversed'].includes(state))throw new Error('订单状态筛选无效');
+      if(payload.beforeId!=null&&(!Number.isSafeInteger(payload.beforeId)||payload.beforeId<=0))throw new Error('订单分页游标无效');
+      args={...common,p_status:state,p_before_id:payload.beforeId??null};
+    }else if(operation==='request_lookup'){
       if(typeof payload.requestKey!=='string'||!/^[A-Za-z0-9._:-]{16,120}$/.test(payload.requestKey))throw new Error('请求核对编号无效');
       if(!['customer_create','order_create','order_lines'].includes(payload.targetOperation))throw new Error('不支持核对该操作');
       args={...common,p_lookup_key:payload.requestKey,p_target_operation:payload.targetOperation};

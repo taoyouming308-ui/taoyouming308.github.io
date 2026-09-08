@@ -31,7 +31,7 @@ export function mapRows(resource, rows, scope) {
     fail('UNSUPPORTED_RESOURCE', '尚未定义该资源映射');
   });
 }
-const reads = new Set(['context', 'stores', 'customers', 'catalog', 'order_detail', 'booking_requests', 'reschedule_requests', 'store_time', 'request_lookup']);
+const reads = new Set(['context', 'stores', 'customers', 'catalog', 'orders', 'order_detail', 'booking_requests', 'reschedule_requests', 'store_time', 'request_lookup']);
 const writes = new Set(['customer_create', 'order_create', 'order_lines', 'booking_cancel_review', 'booking_reschedule', 'reschedule_review']);
 export function createSalonClient({ endpoint, getAccessToken, fetchImpl = globalThis.fetch, makeKey = () => crypto.randomUUID(), onAuthFailure = () => {}, requestTimeoutMs = 30000 }) {
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 120000)

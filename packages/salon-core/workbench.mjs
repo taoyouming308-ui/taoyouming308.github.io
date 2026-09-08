@@ -5,6 +5,7 @@ import {createRecoveryJournal,recoverableOperations} from './recovery-journal.mj
 import {inspectOrder,renderOrderInspection} from './order-inspection.mjs';
 import {verifyOrderLines} from './order-readback.mjs';
 import {createDraftEditor,renderDraftEditor} from './draft-editor.mjs';
+import {orderStates,orderPage,renderOrderPage} from './order-list.mjs';
 import {instantToStoreInput,storeTimeToInstant,formatStoreInstant,storeTimeContext} from './store-time.mjs';
 let timeZone=null,timeVersion=null;
 const $=id=>document.getElementById(id);
@@ -12,6 +13,33 @@ let client,customers=[],items=[],cancelRequests=[],rescheduleRequests=[],orderId
 let journalFault=false,running=false;
 let orderVersion=null;
 const editor=createDraftEditor();
+let nextOrderId=null,listedStatus='';
+for(const [value,label] of Object.entries(orderStates))$('orderFilter').add(new Option(label,value));
+function clearOrderList(){nextOrderId=null;$('orderList').replaceChildren();$('nextOrders').disabled=true;$('orderListStatus').textContent='请查询本店订单。';}
+async function loadOrderList(beforeId=null){
+ const filter=$('orderFilter').value;
+ clearOrderList();
+ const result=await client.read('orders',{status:filter,beforeId});
+ const page=orderPage(result.data,client.scope,{status:filter,beforeId});
+ listedStatus=filter;nextOrderId=page.nextBeforeId;
+ renderOrderPage($('orderList'),page,id=>selectOrder(id,false),id=>selectOrder(id,true));
+ $('nextOrders').disabled=nextOrderId===null;
+ $('orderListStatus').textContent=`本页 ${page.rows.length} 单 · ${nextOrderId===null?'已到末页':'还有更早订单'} · 按内部编号倒序，状态不是实时更新`;
+}
+function selectOrder(id,edit){return run(async()=>{
+ if(edit&&editor.dirty&&!confirm('载入草稿会丢弃当前未保存的项目修改，是否继续？'))return;
+ $('orderInspection').replaceChildren();
+ const result=await client.read('order_detail',{orderId:id});
+ const record=inspectOrder(result.data,id,client.scope);
+ if(edit){
+  const candidate=createDraftEditor();candidate.load(result.data,client.scope);
+  if(!candidate.editable)throw Error('该订单当前不能编辑：仅允许草稿且所有明细待服务。请查看最新状态。');
+  const version=orderEditVersion(result.data.order.edit_version);
+  editor.load(result.data,client.scope);orderId=id;orderVersion=version;renderEditor();
+  $('order').textContent=`当前编辑订单 ${record.number} · 编号 ${id} · 草稿`;
+  status('已重新读取并载入草稿；保存时仍校验版本，尚未写入业务。');
+ }else{renderOrderInspection($('orderInspection'),record);status('原单已只读查询；未修改订单或当前编辑对象。');}
+});}
 function renderEditor(){
  renderDraftEditor($('draftRows'),editor,renderEditor,error=>status(error.message));
  $('draftSummary').textContent=`共 ${editor.rows.length} 项 · ${!editor.editable?'只读，不能保存':editor.dirty?'有未保存修改':'与最近读取记录一致'}`;
@@ -38,8 +66,9 @@ function options(id,rows,label){
  const select=$(id);select.replaceChildren(new Option('请选择',''));
  for(const row of rows)select.add(new Option(label(row),String(row.id)));
 }
-function clear(){editor.clear();renderEditor();timeZone=null;$('timeZone').textContent='门店时区未加载';options('changeRequest',[],()=>{});$('changeReason').value='';customers=[];items=[];cancelRequests=[];rescheduleRequests=[];orderId=null;orderVersion=null;retry=null;options('customer',[],()=>{});options('item',[],()=>{});options('cancelRequest',[],()=>{});options('rescheduleRequest',[],()=>{});$('rescheduleStart').value='';$('rescheduleReason').value='';$('cancelReason').value='';$('order').textContent='尚未创建订单';$('saveLines').disabled=true;}
+function clear(){clearOrderList();editor.clear();renderEditor();timeZone=null;$('timeZone').textContent='门店时区未加载';options('changeRequest',[],()=>{});$('changeReason').value='';customers=[];items=[];cancelRequests=[];rescheduleRequests=[];orderId=null;orderVersion=null;retry=null;options('customer',[],()=>{});options('item',[],()=>{});options('cancelRequest',[],()=>{});options('rescheduleRequest',[],()=>{});$('rescheduleStart').value='';$('rescheduleReason').value='';$('cancelReason').value='';$('order').textContent='尚未创建订单';$('saveLines').disabled=true;}
 async function refresh(){
+ clearOrderList();
  timeZone=null;$('timeZone').textContent='正在读取门店时区';
  const config=await client.read('store_time');
  timeZone=storeTimeContext(config.data,client.scope.organizationId,client.scope.storeId);timeVersion=config.data.timeVersion;$('timeZone').textContent=`当前门店时区：${timeZone}（不使用设备时区）`;
@@ -68,6 +97,7 @@ async function run(action){
  finally{running=false;if(epoch===viewRevision){$('panel').disabled=!client?.scope||Boolean(retry);$('connect').disabled=Boolean(retry);$('retry').disabled=!retry;$('logout').disabled=!client?.scope;for(const id of ['rescheduleRequest','rescheduleStart','rescheduleBooking','changeRequest','approveChange','rejectChange'])$(id).disabled=!timeZone;renderRecovery();}}
 }
 async function mutate(operation,fields,onSuccess){
+ clearOrderList();
  $('orderInspection').replaceChildren();
  if(journalFault||journal().list().length)throw Error('待核对清单未解决，禁止新建业务。');
  const ticket=client.prepare(operation,fields);
@@ -167,6 +197,14 @@ $('saveLines').onclick=()=>run(async()=>{
 });
 $('addItem').onclick=()=>{try{editor.add(items.find(row=>row.id===Number($('item').value)));renderEditor();}catch(error){status(error.message);}};
 $('retry').onclick=()=>run(async()=>{if(retry)await retry();});
+$('listOrders').onclick=()=>run(()=>loadOrderList());
+$('nextOrders').onclick=()=>run(async()=>{if(nextOrderId!==null&&listedStatus===$('orderFilter').value)await loadOrderList(nextOrderId);});
+$('orderFilter').onchange=clearOrderList;
+$('leaveDraft').onclick=()=>run(async()=>{
+ if(editor.dirty&&!confirm('离开编辑会丢弃未保存的项目修改，是否继续？'))return;
+ editor.clear();orderId=null;orderVersion=null;renderEditor();$('order').textContent='尚未创建订单';
+ status('已离开编辑，数据库订单未删除；可从列表重新载入或新建草稿。');
+});
 $('inspectOrder').onclick=()=>run(async()=>{
  $('orderInspection').replaceChildren();
  const id=serverId($('inspectOrderId').value),result=await client.read('order_detail',{orderId:id});

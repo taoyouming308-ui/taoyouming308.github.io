@@ -70,6 +70,8 @@ async function startServer(){
   const customerAllowed=new Set(['context','bookings','reschedule_requests','reschedule_request']);
   allowed.add('store_time');customerAllowed.add('store_time');
   allowed.add('request_lookup');
+  allowed.add('orders');
+  files['/packages/salon-core/order-list.mjs']='packages/salon-core/order-list.mjs';
   server=http.createServer(async(req,res)=>{
    const origin=`http://127.0.0.1:${server.address().port}`;
    const reply=(status,body)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(body));};

@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {orderPage} from '../packages/salon-core/order-list.mjs';
+import {createSalonHandler} from '../supabase/functions/_shared/salon-api-core.mjs';
+const scope={organizationId:1,storeId:2},row={id:5,order_no:'<img>',status:'draft',created_at:'2026-09-08T00:00:00Z'};
+const data={...scope,rows:[row],nextBeforeId:null};
+assert.equal(orderPage(data,scope).rows[0].number,'<img>');
+for(const bad of [{...data,storeId:3},{...data,rows:[row,row]},{...data,nextBeforeId:5},{...data,rows:[{...row,status:'bad'}]},{...data,rows:[{...row,created_at:'bad'}]}])assert.throws(()=>orderPage(bad,scope));
+assert.throws(()=>orderPage(data,scope,{beforeId:5}));assert.throws(()=>orderPage(data,scope,{status:'paid'}));
+const calls=[];
+const handler=createSalonHandler({verifyUser:async()=>({id:'user'}),findStaff:async()=>({id:1,organization_id:1,store_id:2,employment_status:'active'}),resolveStore:async()=>2,invoke:async(rpc,args)=>{calls.push({rpc,args});return data;}});
+const request=fields=>new Request('http://localhost',{method:'POST',headers:{Authorization:'Bearer synthetic-test-token-123456789'},body:JSON.stringify({operation:'orders',...fields})});
+assert.equal((await handler(request({actorStaffId:999,organizationId:999,beforeId:90,status:'draft'}))).status,200);
+assert.deepEqual(calls[0],{rpc:'salon_list_orders',args:{p_actor_staff_id:1,p_organization_id:1,p_store_id:2,p_before_id:90,p_status:'draft'}});
+for(const fields of [{status:'__proto__'},{status:{}},{beforeId:'5'},{beforeId:0},{beforeId:1.5},{beforeId:9007199254740992}])assert.equal((await handler(request(fields))).status,400);
+assert.equal(calls.length,1);
+console.log('Order list model/API passed: scope, pagination, states, strict cursor, server identity');
