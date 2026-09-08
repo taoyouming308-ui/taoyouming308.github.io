@@ -1,4 +1,5 @@
 const OPERATIONS={
+  cash_checkout:{rpc:'salon_checkout_cash'},
   orders:{rpc:'salon_list_orders'},
   request_lookup:{rpc:'salon_lookup_staff_request'},
   store_time:{rpc:'salon_get_store_time_context'},
@@ -59,10 +60,15 @@ export function createSalonHandler(deps){return async function(request){
       args={...common,p_status:state,p_before_id:payload.beforeId??null};
     }else if(operation==='request_lookup'){
       if(typeof payload.requestKey!=='string'||!/^[A-Za-z0-9._:-]{16,120}$/.test(payload.requestKey))throw new Error('请求核对编号无效');
-      if(!['customer_create','order_create','order_lines','order_status'].includes(payload.targetOperation))throw new Error('不支持核对该操作');
+      if(!['customer_create','order_create','order_lines','order_status','cash_checkout'].includes(payload.targetOperation))throw new Error('不支持核对该操作');
       args={...common,p_lookup_key:payload.requestKey,p_target_operation:payload.targetOperation};
     }else if(operation==='store_time'){
       args=common;
+    }else if(operation==='cash_checkout'){
+      if(!Number.isInteger(payload.expectedVersion)||payload.expectedVersion<0||payload.expectedVersion>2147483647)throw new Error('订单版本无效');
+      for(const field of ['amount','tendered'])if(typeof payload[field]!=='string'||!/^\d{1,10}(\.\d{1,2})?$/.test(payload[field]))throw new Error('现金金额必须为最多两位小数');
+      if(typeof payload.requestKey!=='string'||!/^[A-Za-z0-9._:-]{16,120}$/.test(payload.requestKey))throw new Error('请求幂等键无效');
+      args={...common,p_order_id:integer(payload.orderId,'订单'),p_request_key:payload.requestKey,p_expected_version:payload.expectedVersion,p_amount:payload.amount,p_tendered:payload.tendered};
     }else if(operation==='checkout'){
       if(!Array.isArray(payload.payments)||!payload.payments.length)throw new Error('请添加支付方式');
       args={...common,p_order_id:integer(payload.orderId,'订单'),p_request_key:requestKey(payload.requestKey),p_payments:payload.payments};

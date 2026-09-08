@@ -8,6 +8,7 @@ import {createDraftEditor,renderDraftEditor} from './draft-editor.mjs';
 import {orderStates,orderPage,renderOrderPage} from './order-list.mjs';
 import {orderFlow,renderOrderFlow} from './order-flow.mjs';
 import {createCashPreview,renderCashPreview} from './cash-preview.mjs';
+import {verifyCashReceipt,verifyCashLookup,renderCashReceipt} from './cash-receipt.mjs';
 import {instantToStoreInput,storeTimeToInstant,formatStoreInstant,storeTimeContext} from './store-time.mjs';
 let timeZone=null,timeVersion=null;
 const $=id=>document.getElementById(id);
@@ -16,8 +17,8 @@ let journalFault=false,running=false;
 let orderVersion=null;
 const editor=createDraftEditor();
 let loadedFlow=null;
-let cash=createCashPreview();
-function clearCashResult(){ $('cashResult').replaceChildren(); }
+let cash=createCashPreview(),cashConfirmation=null;
+function clearCashResult(){cashConfirmation=null;$('cashConfirm').disabled=true;$('cashResult').replaceChildren();}
 function resetCash(){cash.clear();$('cashTendered').value='';clearCashResult();}
 function hydrateEditor(data,scope){const next=orderFlow(data,scope),nextCash=createCashPreview();nextCash.load(data,scope);editor.load(data,scope);loadedFlow=next;resetCash();cash=nextCash;}
 function resetEditor(){editor.clear();loadedFlow=null;resetCash();}
@@ -122,7 +123,7 @@ async function mutate(operation,fields,onSuccess){
  retry=async()=>{
   let result;
   try{result=await client.submit(ticket);}catch(error){
-   if(['order_lines','order_status'].includes(operation)&&error.message.includes('订单版本已变化')){editor.lock();orderVersion=null;renderEditor();}
+   if(['order_lines','order_status','cash_checkout'].includes(operation)&&error.message.includes('订单版本已变化')){editor.lock();orderVersion=null;renderEditor();}
    // A later rejection cannot prove an earlier unknown submission did not commit.
    if(error.code==='API_REJECTED'&&error.httpStatus>=400&&error.httpStatus<500){
     retry=null;if(tracked&&!hadUnknownResult)try{pendingJournal.acknowledge(ticket);}catch(e){journalFault=true;throw e;}
@@ -132,7 +133,8 @@ async function mutate(operation,fields,onSuccess){
   if(tracked){
    try{
     const id=serverId(result.data?.[operation==='customer_create'?'customerId':'orderId']);
-    if(['order_lines','order_status'].includes(operation)&&id!==fields.orderId)throw Error('返回订单不匹配，请继续核对原请求。');
+    if(['order_lines','order_status','cash_checkout'].includes(operation)&&id!==fields.orderId)throw Error('返回订单不匹配，请继续核对原请求。');
+    if(operation==='cash_checkout')verifyCashReceipt(result.data,client.scope,ticket.requestKey,{orderId:fields.orderId,version:fields.expectedVersion,payable:fields.amount,tendered:fields.tendered,change:fields.change});
     if(operation==='order_status'&&result.data.status!==fields.status)throw Error('返回状态不匹配，请继续核对原请求。');
    }catch(error){hadUnknownResult=true;throw error;}
   }
@@ -140,7 +142,7 @@ async function mutate(operation,fields,onSuccess){
   // A successful write is not a completed UI handoff. Retain metadata until
   // the current resource has been read; read failures must never invite a new write.
   status(`写入已保存，正在核对当前记录 · 请求号 ${result.requestId}`);
-  try{await onSuccess(result.data);}catch(error){throw Error(`写入已经成功，请勿重复创建。后续回读失败：${error.message}；${tracked?'原请求号已保留，请使用“只读核对原请求”。':''}追踪号 ${result.requestId}`);}
+  try{await onSuccess(result.data,ticket);}catch(error){throw Error(`写入已经成功，请勿重复创建。后续回读失败：${error.message}；${tracked?'原请求号已保留，请使用“只读核对原请求”。':''}追踪号 ${result.requestId}`);}
   if(tracked)try{pendingJournal.acknowledge(ticket);}catch(error){journalFault=true;throw Error('写入已成功，但清单更新失败；请勿重复提交。'+error.message);}
  };
  await retry();
@@ -219,9 +221,26 @@ $('cashPreview').onclick=()=>run(async()=>{
  if(!cash.available||editor.dirty||orderVersion===null||cash.order.id!==orderId)throw Error('请从列表重新载入待收银订单');
  const input=$('cashTendered').value;
  const result=await client.read('order_detail',{orderId:cash.order.id});
- renderCashPreview($('cashResult'),cash.preview(result.data,client.scope,input));
+ cashConfirmation=cash.preview(result.data,client.scope,input);
+ renderCashPreview($('cashResult'),cashConfirmation);$('cashConfirm').disabled=false;
  status('已重新核对订单并生成现金预览；没有提交收款。');
 });
+ $('cashConfirm').onclick=()=>run(async()=>{
+  const preview=cashConfirmation;
+  if(!preview||!cash.available||editor.dirty||preview.orderId!==orderId||preview.version!==orderVersion)throw Error('请重新预览并核对现金金额');
+  if(!confirm(`仅合成测试：订单 ${preview.number}，收款 ¥${preview.payable}，实收 ¥${preview.tendered}，找零 ¥${preview.change}。确认现金已点清？提交后会生成支付和商品出库记录。`))return;
+  await mutate('cash_checkout',{orderId:preview.orderId,expectedVersion:preview.version,amount:preview.payable,tendered:preview.tendered,change:preview.change},async(data,ticket)=>{
+   const lookup=(await client.read('request_lookup',{targetOperation:'cash_checkout',requestKey:ticket.requestKey})).data;
+   const checked=verifyCashLookup(lookup,client.scope,ticket.requestKey,preview);
+   if(checked.receipt.paymentId!==data.paymentId)throw Error('支付编号回读不匹配');
+   const current=(await client.read('order_detail',{orderId:preview.orderId})).data;
+   inspectOrder(current,preview.orderId,client.scope);hydrateEditor(current,client.scope);
+   orderVersion=orderEditVersion(current.order.edit_version);renderEditor();
+   $('order').textContent=`订单 ${orderId} · 当前状态 ${current.order.status}`;
+   renderCashReceipt($('cashResult'),checked,current.order.status);
+   status('现金收款已提交，并按原请求核对支付记录；未扣会员。');
+  });
+ });
 function advanceOrder(target,label){return run(async()=>{
  if(!loadedFlow||loadedFlow.id!==orderId||orderVersion===null||editor.dirty||!loadedFlow.actions.includes(target))throw Error('当前订单不能执行该状态操作，请先保存或重新载入核对。');
  if(!confirm(`订单 ${loadedFlow.number}：${label}？只修改整单状态，不代表项目完成或已收款。`))return;
@@ -260,7 +279,8 @@ $('lookupRequest').onclick=()=>run(async()=>{
  const expectedType=ticket.operation==='customer_create'?'customer':'order';
  if(result.status!=='committed'||result.resourceType!==expectedType||typeof result.completedAt!=='string'||!Number.isFinite(Date.parse(result.completedAt)))throw Error('核对结果不完整，原请求继续保留。');
  const id=serverId(result.resourceId);
- let recoveredOrder;
+ let recoveredOrder,recoveredCash;
+ if(ticket.operation==='cash_checkout')recoveredCash=verifyCashLookup(result,client.scope,ticket.requestKey);
  if(expectedType==='order'){
   recoveredOrder=(await client.read('order_detail',{orderId:id})).data;
   if(serverId(recoveredOrder?.order?.id)!==id)throw Error('订单现状核对失败，原请求继续保留。');
@@ -273,6 +293,7 @@ $('lookupRequest').onclick=()=>run(async()=>{
  if(recoveredOrder){orderVersion=orderEditVersion(recoveredOrder.order.edit_version);orderId=id;$('order').textContent=`已恢复订单 ${id} · 当前状态 ${recoveredOrder.order.status}`;$('saveLines').disabled=recoveredOrder.order.status!=='draft';}
  else $('customer').value=String(id);
  renderEditor();
+ if(recoveredCash)renderCashReceipt($('cashResult'),recoveredCash,recoveredOrder.order.status);
  status('已核对原请求并读取当前记录，没有重新提交业务。');
 });
 $('refresh').onclick=()=>run(async()=>{await refresh();status('已刷新本店数据。');});

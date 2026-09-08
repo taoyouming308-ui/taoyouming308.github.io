@@ -1,5 +1,13 @@
 # Agent Sync Status
 
+## Salon 现金版本化提交与原请求核对（2026-09-08）
+
+- 新迁移 20260908045658_salon_cash_checkout_versioned.sql 与 cash_checkout API。全额现金、锁单 CAS、固定库存锁序、支付/库存/审计/请求同事务；员工指纹覆盖计数增至 44（函数数，不是模块数）。旧 checkout 保留且未向本机页开放。
+- 本机现金页预览后二次确认；专属回执校验与 request_lookup 具体支付记录核对，成功回读现状才清单。丢包同键重试、刷新只读恢复；sessionStorage 仍只存动作/请求号，不存资金载荷。
+- 新模型/API 与临时 PG/1280/390 专项通过，包括同键/异键并发、另一员工隔离、历史逆转恢复、晚期失败全回滚；全量 JS/MJS、现金预览、整单状态、刷新恢复/回读失败恢复及只读核对回归通过。手机截图已检查。基础工作台仍无收银权限和商品库存，只有专测合成夹具启用。
+- 按 Supabase/Postgres 技能限制权限、固定锁序和原子事务；本地 Advisor 因默认实例未运行未完成，不切生产。正式 Auth/Edge、退款页、会员/电子/组合支付及原三 App 整合未完成。
+- 今日备份已确认；App version: v480。仅 feature/meiguanjia-parity-v1，不推 main、不部署、不写真实业务数据。详情 docs/salon-cash-checkout.md。
+
 ## Salon 现金收银预览第一批（2026-09-08）
 
 - 新 cash-preview.mjs，现金全额预览：已有 order_detail 重新核对范围/版本/状态/应收，整数分算找零，金额不足/格式/上限/零元拒绝。输入变动、错误、重选、切店退出清除预览，输入仅内存。
