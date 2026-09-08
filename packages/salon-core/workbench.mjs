@@ -7,6 +7,7 @@ import {verifyOrderLines} from './order-readback.mjs';
 import {createDraftEditor,renderDraftEditor} from './draft-editor.mjs';
 import {orderStates,orderPage,renderOrderPage} from './order-list.mjs';
 import {orderFlow,renderOrderFlow} from './order-flow.mjs';
+import {createCashPreview,renderCashPreview} from './cash-preview.mjs';
 import {instantToStoreInput,storeTimeToInstant,formatStoreInstant,storeTimeContext} from './store-time.mjs';
 let timeZone=null,timeVersion=null;
 const $=id=>document.getElementById(id);
@@ -15,8 +16,11 @@ let journalFault=false,running=false;
 let orderVersion=null;
 const editor=createDraftEditor();
 let loadedFlow=null;
-function hydrateEditor(data,scope){const next=orderFlow(data,scope);editor.load(data,scope);loadedFlow=next;}
-function resetEditor(){editor.clear();loadedFlow=null;}
+let cash=createCashPreview();
+function clearCashResult(){ $('cashResult').replaceChildren(); }
+function resetCash(){cash.clear();$('cashTendered').value='';clearCashResult();}
+function hydrateEditor(data,scope){const next=orderFlow(data,scope),nextCash=createCashPreview();nextCash.load(data,scope);editor.load(data,scope);loadedFlow=next;resetCash();cash=nextCash;}
+function resetEditor(){editor.clear();loadedFlow=null;resetCash();}
 let nextOrderId=null,listedStatus='';
 for(const [value,label] of Object.entries(orderStates))$('orderFilter').add(new Option(label,value));
 function clearOrderList(){nextOrderId=null;$('orderList').replaceChildren();$('nextOrders').disabled=true;$('orderListStatus').textContent='请查询本店订单。';}
@@ -45,6 +49,10 @@ function selectOrder(id,edit){return run(async()=>{
  }else{renderOrderInspection($('orderInspection'),record);status('原单已只读查询；未修改订单或当前编辑对象。');}
 });}
 function renderEditor(){
+ const cashDisabled=!cash.available||editor.dirty||orderVersion===null;
+ $('cashOrder').textContent=cash.available?`已载入订单 ${cash.order.number} · 应收 ¥${cash.order.payable}（点击预览时重新核对）`:'请先载入有明细、应收大于零的待收银订单。';
+ $('cashPreview').disabled=cashDisabled;$('cashTendered').disabled=cashDisabled;
+ if(cashDisabled)clearCashResult();
  renderOrderFlow($('orderFlow'),loadedFlow,editor.dirty||orderVersion===null,advanceOrder);
  renderDraftEditor($('draftRows'),editor,renderEditor,error=>status(error.message));
  $('draftSummary').textContent=`共 ${editor.rows.length} 项 · ${!editor.editable?'只读，不能保存':editor.dirty?'有未保存修改':'与最近读取记录一致'}`;
@@ -73,6 +81,7 @@ function options(id,rows,label){
 }
 function clear(){clearOrderList();resetEditor();renderEditor();timeZone=null;$('timeZone').textContent='门店时区未加载';options('changeRequest',[],()=>{});$('changeReason').value='';customers=[];items=[];cancelRequests=[];rescheduleRequests=[];orderId=null;orderVersion=null;retry=null;options('customer',[],()=>{});options('item',[],()=>{});options('cancelRequest',[],()=>{});options('rescheduleRequest',[],()=>{});$('rescheduleStart').value='';$('rescheduleReason').value='';$('cancelReason').value='';$('order').textContent='尚未创建订单';$('saveLines').disabled=true;}
 async function refresh(){
+ clearCashResult();
  clearOrderList();
  timeZone=null;$('timeZone').textContent='正在读取门店时区';
  const config=await client.read('store_time');
@@ -102,6 +111,7 @@ async function run(action){
  finally{running=false;if(epoch===viewRevision){$('panel').disabled=!client?.scope||Boolean(retry);$('connect').disabled=Boolean(retry);$('retry').disabled=!retry;$('logout').disabled=!client?.scope;for(const id of ['rescheduleRequest','rescheduleStart','rescheduleBooking','changeRequest','approveChange','rejectChange'])$(id).disabled=!timeZone;renderRecovery();}}
 }
 async function mutate(operation,fields,onSuccess){
+ clearCashResult();
  clearOrderList();
  $('orderInspection').replaceChildren();
  if(journalFault||journal().list().length)throw Error('待核对清单未解决，禁止新建业务。');
@@ -203,6 +213,15 @@ $('saveLines').onclick=()=>run(async()=>{
 });
 $('addItem').onclick=()=>{try{editor.add(items.find(row=>row.id===Number($('item').value)));renderEditor();}catch(error){status(error.message);}};
 $('retry').onclick=()=>run(async()=>{if(retry)await retry();});
+$('cashTendered').oninput=clearCashResult;
+$('cashPreview').onclick=()=>run(async()=>{
+ clearCashResult();
+ if(!cash.available||editor.dirty||orderVersion===null||cash.order.id!==orderId)throw Error('请从列表重新载入待收银订单');
+ const input=$('cashTendered').value;
+ const result=await client.read('order_detail',{orderId:cash.order.id});
+ renderCashPreview($('cashResult'),cash.preview(result.data,client.scope,input));
+ status('已重新核对订单并生成现金预览；没有提交收款。');
+});
 function advanceOrder(target,label){return run(async()=>{
  if(!loadedFlow||loadedFlow.id!==orderId||orderVersion===null||editor.dirty||!loadedFlow.actions.includes(target))throw Error('当前订单不能执行该状态操作，请先保存或重新载入核对。');
  if(!confirm(`订单 ${loadedFlow.number}：${label}？只修改整单状态，不代表项目完成或已收款。`))return;

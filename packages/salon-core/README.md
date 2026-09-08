@@ -1,5 +1,7 @@
 # Salon Core
 
+`cash-preview.mjs` 为现金全额收银预览：重新读取当前待收银订单并核对版本/应收，以整数分计算拟收现金及找零；不提交支付、不产生回执、不读会员余额。输入/预览仅内存，切店退出清除。详见 `../../docs/salon-cash-preview.md`；checkout 仍未接入本机客户端/页面。
+
 `order-flow.mjs` 与本机工作台接通整单确认开单/开始服务/转待收银。操作携带读取时版本，并接入原键重试及刷新核对。只改变订单状态，不自动完成项目，不收款或扣会员。细节与旧无版本内部调用边界见 `../../docs/salon-order-flow.md`。
 
 订单编辑版本见 `../../docs/salon-order-edit-version.md`。`order_lines` 必须携带当前记录读取时的 expectedVersion；未知请求重试冻结原版本，不能在提交前刷新版本掩盖冲突。版本冲突停止当前保存，按编号原单查询仍只读。

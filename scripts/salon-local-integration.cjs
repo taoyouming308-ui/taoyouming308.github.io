@@ -73,6 +73,7 @@ async function startServer(){
   allowed.add('orders');
   allowed.add('order_status');
   files['/packages/salon-core/order-flow.mjs']='packages/salon-core/order-flow.mjs';
+  files['/packages/salon-core/cash-preview.mjs']='packages/salon-core/cash-preview.mjs';
   files['/packages/salon-core/order-list.mjs']='packages/salon-core/order-list.mjs';
   server=http.createServer(async(req,res)=>{
    const origin=`http://127.0.0.1:${server.address().port}`;
