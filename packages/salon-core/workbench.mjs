@@ -78,9 +78,11 @@ async function mutate(operation,fields,onSuccess){
    }catch(error){hadUnknownResult=true;throw error;}
   }
   retry=null;
+  // A successful write is not a completed UI handoff. Retain metadata until
+  // the current resource has been read; read failures must never invite a new write.
+  status(`写入已保存，正在核对当前记录 · 请求号 ${result.requestId}`);
+  try{await onSuccess(result.data);}catch(error){throw Error(`写入已经成功，请勿重复创建。后续回读失败：${error.message}；${tracked?'原请求号已保留，请使用“只读核对原请求”。':''}追踪号 ${result.requestId}`);}
   if(tracked)try{pendingJournal.acknowledge(ticket);}catch(error){journalFault=true;throw Error('写入已成功，但清单更新失败；请勿重复提交。'+error.message);}
-  status(`已保存 · 请求号 ${result.requestId}`);
-  try{await onSuccess(result.data);}catch(error){throw Error(`写入已经成功，请勿重复创建。后续回读失败：${error.message}；追踪号 ${result.requestId}`);}
  };
  await retry();
 }
@@ -119,13 +121,20 @@ $('connect').onclick=()=>run(async()=>{
 $('store').onchange=()=>run(async()=>{const id=$('store').value;clear();if(!id){client.disconnect();return;}await client.connect(serverId(id));await refresh();status('已切换门店，旧选择已清除。');});
 $('createCustomer').onclick=()=>run(async()=>{
  const displayName=$('name').value.trim();if(!displayName)throw Error('请输入合成顾客姓名');
- await mutate('customer_create',{displayName,source:'other'},async data=>{await refresh();$('customer').value=String(serverId(data.customerId));});
+ await mutate('customer_create',{displayName,source:'other'},async data=>{
+  await refresh();const id=serverId(data.customerId);
+  if(!customers.some(row=>row.id===id))throw Error('当前授权列表未找到已建立的顾客，请核对原记录');
+  $('customer').value=String(id);status('顾客已建档并读取确认。');
+ });
 });
 $('createOrder').onclick=()=>run(async()=>{
  if(orderId)throw Error('已有订单草稿，请先处理原订单');
  const selected=customers.find(row=>row.id===Number($('customer').value));if(!selected)throw Error('请选择本店顾客');
  await mutate('order_create',{customerId:selected.id,notes:'本机合成接口联调'},async data=>{
-  orderId=serverId(data.orderId);$('order').textContent=`订单 ${data.orderNo} · ${data.status}`;$('saveLines').disabled=false;
+  const id=serverId(data.orderId),result=await client.read('order_detail',{orderId:id});
+  if(serverId(result.data?.order?.id)!==id)throw Error('订单回读与创建对象不一致，请核对原订单');
+  orderId=id;$('order').textContent=`订单 ${id} · ${result.data.order.status}`;$('saveLines').disabled=result.data.order.status!=='draft';
+  status('订单已创建并读取确认。');
  });
 });
 $('saveLines').onclick=()=>run(async()=>{
@@ -134,6 +143,7 @@ $('saveLines').onclick=()=>run(async()=>{
   const result=await client.read('order_detail',{orderId});
   if(serverId(result.data?.order?.id)!==orderId||!result.data.lines?.some(line=>serverId(line.catalog_item_id)===selected.id))throw Error('订单回读与保存对象不一致，请核对原订单');
   $('order').textContent=`订单 ${orderId} · 明细已从数据库读取确认`;
+  $('saveLines').disabled=result.data.order.status!=='draft';
   status(`明细已保存并读取验证 · 追踪号 ${result.requestId}`);
  });
 });
