@@ -91,6 +91,9 @@ async function run() {
     assert.equal(evidenceCall.evidence_required, false, 'the switch must waive only the selected business record');
     await page.locator('#monthly-inline-amount').fill('31');
     await page.locator('#monthly-inline-reason').fill('本地浏览器回归测试');
+    await page.locator('#monthly-inline-preview-button').click();
+    assert.equal(await page.locator('#monthly-inline-preview').isVisible(), true, 'amount confirmation preview must be visible before save');
+    assert.match(await page.locator('#monthly-inline-preview').innerText(), /修改前[\s\S]*30\.00[\s\S]*修改后[\s\S]*31\.00[\s\S]*差额[\s\S]*\+1\.00/);
     await page.locator('#monthly-inline-save').click();
     await page.waitForFunction(() => window.fixtureCalls.some(call => call.operation === 'history_monthly_cell_save'));
     const amountCall = await page.evaluate(() => window.fixtureCalls.find(call => call.operation === 'history_monthly_cell_save'));
