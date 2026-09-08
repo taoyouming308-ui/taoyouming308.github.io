@@ -43,6 +43,7 @@ async function run() {
         window.fixtureCalls.push({ operation, ...payload });
         const report = state.data.monthly_report;
         const target = { id: '11111111-1111-4111-8111-111111111111', historical_ledger_entry_id: '11111111-1111-4111-8111-111111111111', cell_address: payload.cell_address, numeric_value: 30, label: '测试总收入', cell_kind: 'input' };
+        if (payload.cell_address === 'C3') target.id = target.historical_ledger_entry_id = '33333333-3333-4333-8333-333333333333';
         if (operation === 'cell_trace') {
           if (window.fixtureMode === 'slow') await new Promise(resolve => setTimeout(resolve, 100));
           if (window.fixtureMode === 'missing') return { target, report, historical: true, mode: 'input', evidence: [] };
@@ -51,7 +52,7 @@ async function run() {
         }
         if (operation === 'history_evidence_images') return { filename: '模拟凭证包.docx', images: [{ filename: 'image1.png', data_url: image }, { filename: 'image2.png', data_url: image }] };
         if (operation === 'voucher_url') return { filename: '模拟日报.png', url: image };
-        if (operation === 'business_evidence_rule_save' || operation === 'history_monthly_cell_save') return { saved: true };
+        if (operation === 'business_evidence_rule_save' || operation === 'history_monthly_cell_save' || operation === 'history_ledger_evidence_upload') return { saved: true };
         if (operation === 'overview') return state.data;
         throw Error('Unexpected API or write attempted: ' + operation);
       };
@@ -83,8 +84,9 @@ async function run() {
     // One amount page keeps amount edit, upload and per-record evidence control together.
     await page.evaluate(() => openCellTrace('C4'));
     await page.locator('.monthly-inline-editor').waitFor();
-    assert.equal(await page.locator('.business-detail-card').isVisible(), true, 'single records must stay visible outside the advanced trace disclosure');
-    await page.locator('[data-business-evidence-toggle]').click();
+    assert.equal(await page.locator('.monthly-simple-workbench [data-rules]').isVisible(), true, 'single records must stay visible outside the advanced trace disclosure');
+    assert.equal(await page.locator('.monthly-simple-workbench').evaluate(node => node.compareDocumentPosition(document.querySelector('.monthly-voucher-preview')) & Node.DOCUMENT_POSITION_FOLLOWING), 4, 'controls precede gallery');
+    await page.locator('[data-simple-rule]').click();
     await page.waitForFunction(() => window.fixtureCalls.some(call => call.operation === 'business_evidence_rule_save'));
     const evidenceCall = await page.evaluate(() => window.fixtureCalls.find(call => call.operation === 'business_evidence_rule_save'));
     assert.equal(evidenceCall.business_type, 'history_petty_cash');
@@ -98,6 +100,43 @@ async function run() {
     await page.waitForFunction(() => window.fixtureCalls.some(call => call.operation === 'history_monthly_cell_save'));
     const amountCall = await page.evaluate(() => window.fixtureCalls.find(call => call.operation === 'history_monthly_cell_save'));
     assert.equal(amountCall.after_amount, '31');
+    // A selected image remains local until explicit confirmation, and cancel has no write.
+    const photo = { name: 'synthetic-receipt.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jVioAAAAASUVORK5CYII=', 'base64') };
+    let chooser = page.waitForEvent('filechooser');
+    await page.locator('#monthly-inline-upload').click();
+    await (await chooser).setFiles(photo);
+    await page.locator('#monthly-photo-pending img').waitFor();
+    if (process.env.ZYSYR_VOUCHER_SCREENSHOTS) await page.screenshot({ path: path.join(process.env.ZYSYR_VOUCHER_SCREENSHOTS, 'zysyr-pending-photo-' + width + 'x' + height + '.png') });
+    assert.equal(await page.evaluate(() => window.fixtureCalls.filter(call => call.operation === 'history_ledger_evidence_upload').length), 0);
+    await page.locator('[data-cancel-photo]').click();
+    assert.equal(await page.locator('#monthly-photo-pending').count(), 0);
+    chooser = page.waitForEvent('filechooser');
+    await page.locator('#monthly-inline-upload').click();
+    await (await chooser).setFiles(photo);
+    await page.locator('[data-save-photo]').click();
+    await page.waitForFunction(() => window.fixtureCalls.some(call => call.operation === 'history_ledger_evidence_upload'));
+    const photoCall = await page.evaluate(() => window.fixtureCalls.find(call => call.operation === 'history_ledger_evidence_upload'));
+    assert.equal(photoCall.ledger_entry_id, '11111111-1111-4111-8111-111111111111');
+    assert.equal(photoCall.store, amountCall.store);
+    // Formula root exposes editable leaves and individual evidence switches in-place.
+    await page.evaluate(() => openCellTrace('C3'));
+    await page.locator('[aria-label="选择组成金额"]').waitFor();
+    await page.locator('#monthly-inline-amount').waitFor();
+    assert.equal(await page.locator('[data-simple-rule]').count(), 1);
+    assert.equal(await page.evaluate(() => state.trace.address), 'C3');
+    await page.locator('#monthly-inline-amount').fill('32');
+    await page.locator('#monthly-inline-preview-button').click();
+    await page.locator('#monthly-inline-save').click();
+    await page.waitForFunction(() => window.fixtureCalls.some(call => call.operation === 'history_monthly_cell_save' && call.after_amount === '32') && state.trace.address === 'C3');
+    await page.locator('[aria-label="选择组成金额"]').waitFor();
+    await page.locator('#monthly-inline-upload').waitFor();
+    chooser = page.waitForEvent('filechooser');
+    await page.locator('#monthly-inline-upload').click();
+    await (await chooser).setFiles(photo);
+    await page.locator('[data-save-photo]').click();
+    await page.waitForFunction(() => window.fixtureCalls.filter(call => call.operation === 'history_ledger_evidence_upload').length === 2);
+    assert.equal(await page.evaluate(() => window.fixtureCalls.filter(call => call.operation === 'history_ledger_evidence_upload').at(-1).ledger_entry_id), '11111111-1111-4111-8111-111111111111', 'formula upload must bind selected constituent, not root');
+    await page.waitForFunction(() => !document.getElementById('monthly-photo-pending') && state.trace.address === 'C3');
     // A late response must not replace a newer selected month.
     await page.evaluate(() => { window.fixtureMode = 'slow'; openCellTrace('C3'); });
     await page.evaluate(() => { document.getElementById('month').value = '2026-02'; document.getElementById('cell-trace-body').innerHTML = '新月份占位'; });
