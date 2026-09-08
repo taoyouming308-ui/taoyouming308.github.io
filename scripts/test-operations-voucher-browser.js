@@ -42,15 +42,17 @@ async function run() {
       api = async function (operation, payload) {
         window.fixtureCalls.push({ operation, ...payload });
         const report = state.data.monthly_report;
-        const target = { cell_address: payload.cell_address, numeric_value: 30, label: '测试总收入', cell_kind: 'input' };
+        const target = { id: '11111111-1111-4111-8111-111111111111', historical_ledger_entry_id: '11111111-1111-4111-8111-111111111111', cell_address: payload.cell_address, numeric_value: 30, label: '测试总收入', cell_kind: 'input' };
         if (operation === 'cell_trace') {
           if (window.fixtureMode === 'slow') await new Promise(resolve => setTimeout(resolve, 100));
           if (window.fixtureMode === 'missing') return { target, report, historical: true, mode: 'input', evidence: [] };
           if (payload.cell_address === 'C3') return { target, report, historical: true, mode: 'formula', precedents: [{ cell_address: 'C4', label: '组成项目甲' }, { cell_address: 'C5', label: '组成项目乙' }] };
-          return { target, report, historical: true, mode: 'input', evidence: [{ id: 'bundle', original_filename: '模拟凭证包.docx', trace_link_level: 'bundle_only' }, { id: 'daily', evidence_source: 'voucher_attachment', original_filename: '模拟日报.png' }] };
+          return { target, report, historical: true, mode: 'input', can_edit: true, can_upload_vouchers: true, can_manage_business_evidence_rules: true, business_total: 30, business_details: [{ business_type: 'history_petty_cash', business_id: '22222222-2222-4222-8222-222222222222', date: '2026-01-02', title: '单笔开支', description: '测试明细', amount: 30, evidence_policy: 'voucher_required', has_evidence: true }], evidence: [{ id: 'bundle', original_filename: '模拟凭证包.docx', trace_link_level: 'bundle_only' }, { id: 'daily', evidence_source: 'voucher_attachment', original_filename: '模拟日报.png' }] };
         }
         if (operation === 'history_evidence_images') return { filename: '模拟凭证包.docx', images: [{ filename: 'image1.png', data_url: image }, { filename: 'image2.png', data_url: image }] };
         if (operation === 'voucher_url') return { filename: '模拟日报.png', url: image };
+        if (operation === 'business_evidence_rule_save' || operation === 'history_monthly_cell_save') return { saved: true };
+        if (operation === 'overview') return state.data;
         throw Error('Unexpected API or write attempted: ' + operation);
       };
     });
@@ -78,6 +80,21 @@ async function run() {
     assert.equal(calls.filter(call => call.operation === 'history_evidence_images').length, 1);
     assert.equal(calls.filter(call => call.operation === 'voucher_url').length, 1);
     assert.equal(new Set(calls.map(call => call.store)).size, 1);
+    // One amount page keeps amount edit, upload and per-record evidence control together.
+    await page.evaluate(() => openCellTrace('C4'));
+    await page.locator('.monthly-inline-editor').waitFor();
+    assert.equal(await page.locator('.business-detail-card').isVisible(), true, 'single records must stay visible outside the advanced trace disclosure');
+    await page.locator('[data-business-evidence-toggle]').click();
+    await page.waitForFunction(() => window.fixtureCalls.some(call => call.operation === 'business_evidence_rule_save'));
+    const evidenceCall = await page.evaluate(() => window.fixtureCalls.find(call => call.operation === 'business_evidence_rule_save'));
+    assert.equal(evidenceCall.business_type, 'history_petty_cash');
+    assert.equal(evidenceCall.evidence_required, false, 'the switch must waive only the selected business record');
+    await page.locator('#monthly-inline-amount').fill('31');
+    await page.locator('#monthly-inline-reason').fill('本地浏览器回归测试');
+    await page.locator('#monthly-inline-save').click();
+    await page.waitForFunction(() => window.fixtureCalls.some(call => call.operation === 'history_monthly_cell_save'));
+    const amountCall = await page.evaluate(() => window.fixtureCalls.find(call => call.operation === 'history_monthly_cell_save'));
+    assert.equal(amountCall.after_amount, '31');
     // A late response must not replace a newer selected month.
     await page.evaluate(() => { window.fixtureMode = 'slow'; openCellTrace('C3'); });
     await page.evaluate(() => { document.getElementById('month').value = '2026-02'; document.getElementById('cell-trace-body').innerHTML = '新月份占位'; });

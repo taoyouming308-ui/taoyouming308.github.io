@@ -2013,6 +2013,23 @@ async function reportCells(payload: JsonRecord, session: JsonRecord): Promise<Js
   return { report: { ...report, uploaded_by: uploaders[0] || null }, cells, vouchers };
 }
 
+async function businessEvidenceRulesForDetails(
+  companyId: string,
+  storeId: string,
+  details: JsonRecord[],
+): Promise<JsonRecord[]> {
+  const ids = Array.from(new Set(details.map((row) => cleanText(row.business_id, 40)).filter(Boolean)));
+  if (!ids.length) return details;
+  const rules = await restRowsAll(`zysyr_business_evidence_rules?select=id,business_type,business_id,evidence_policy,reason,updated_by_user_id,updated_at&company_id=eq.${companyId}&store_id=eq.${storeId}&business_id=in.${uuidIn(ids)}&limit=10000`, 10000);
+  const ruleMap = new Map(rules.map((rule) => [
+    `${cleanText(rule.business_type, 60)}:${cleanText(rule.business_id, 40)}`, rule,
+  ]));
+  return details.map((detail) => {
+    const rule = ruleMap.get(`${cleanText(detail.business_type, 60)}:${cleanText(detail.business_id, 40)}`) || null;
+    return { ...detail, evidence_policy: cleanText(rule?.evidence_policy, 30) || "voucher_required", evidence_rule: rule };
+  });
+}
+
 async function monthlyCellBusinessDetails(
   companyId: string,
   storeId: string,
@@ -2146,7 +2163,7 @@ async function monthlyCellBusinessDetails(
   const voucherIds = Array.from(new Set([...links, ...pendingRequests].map((row) => row.voucher_id)));
   const vouchers = voucherIds.length ? await restRowsAll(`zysyr_voucher_attachments?select=id,original_filename,mime_type,document_type,audit_status,uploaded_at&company_id=eq.${companyId}&store_id=eq.${storeId}&id=in.${uuidIn(voucherIds)}&limit=10000`, 10000) : [];
   const voucherMap = new Map(vouchers.map((row) => [cleanText(row.id, 40), row]));
-  return unique.map((detail) => {
+  const withVouchers = unique.map((detail) => {
     const detailTargets = Array.isArray(detail.voucher_targets) && detail.voucher_targets.length
       ? detail.voucher_targets as JsonRecord[]
       : [{ business_type: detail.business_type, business_id: detail.business_id }];
@@ -2163,6 +2180,7 @@ async function monthlyCellBusinessDetails(
       .map((request) => ({ ...request, voucher: voucherMap.get(cleanText(request.voucher_id, 40)) || null }));
     return { ...detail, vouchers: Array.from(detailVoucherMap.values()), pending_vouchers: detailPending };
   });
+  return businessEvidenceRulesForDetails(companyId, storeId, withVouchers);
 }
 
 function historyBusinessAmount(entry: JsonRecord, monthlyLabel: string): number | null {
@@ -2263,6 +2281,7 @@ async function historicalCellTrace(companyId: string, storeId: string, reportId:
     target, report, historical: true,
     can_edit: cleanText(session.operations_role, 40) === "finance" && hasAuthCapability(session, "confirmed_finance.adjust"),
     can_upload_vouchers: cleanText(session.operations_role, 40) === "finance" && canWriteExpense(session),
+    can_manage_business_evidence_rules: cleanText(session.operations_role, 40) === "finance" && hasAuthCapability(session, "confirmed_finance.adjust"),
     can_manage_evidence_rules: hasAuthCapability(session, "finance_account.create"),
     evidence_policy: evidencePolicy,
     evidence_rule: ruleRows.find((rule) => cleanText(rule.cell_address, 20).toUpperCase() === address) || null,
@@ -2300,25 +2319,36 @@ async function historicalCellTrace(companyId: string, storeId: string, reportId:
     && Math.abs(Number(dailyIncome.total || 0) - Number(current.amount || 0)) <= 0.01;
   const matched = dailyReconciled ? dailyIncome.details as JsonRecord[] : ledgerMatched;
   const detailEvidence = ledgerMatched.length ? await historyEvidenceForEntries(companyId, storeId, moduleEntries.filter((row) => ledgerMatched.some((detail) => detail.business_id === row.id))) : { links: [], evidence: [] };
+  const detailLinks = detailEvidence.links as JsonRecord[];
+  const matchedWithEvidence = matched.map((detail) => ({ ...detail,
+    has_evidence: cleanText(detail.business_type, 60) === "daily_sheet"
+      ? Boolean(detail.source_voucher_id)
+      : detailLinks.some((link) => cleanText(link.import_row_id, 40) === cleanText(detail.import_row_id, 40)),
+  }));
+  const matchedWithRules = await businessEvidenceRulesForDetails(companyId, storeId, matchedWithEvidence);
   result.mode = "input";
   result.revision = { status: (evidenceData.evidence as JsonRecord[]).length ? "matched" : "missing_evidence", source_amount: current.amount, delta: 0 };
   result.sources = [];
-  result.business_details = matched;
-  result.business_total = Number(matched.reduce((sum, row) => sum + Number(row.amount || 0), 0).toFixed(4));
+  result.business_details = matchedWithRules;
+  result.business_total = Number(matchedWithRules.reduce((sum, row) => sum + Number(row.amount || 0), 0).toFixed(4));
   const allEvidence = Array.from(new Map([
     ...(dailyReconciled ? dailyIncome.evidence as JsonRecord[] : []),
     ...historyEvidenceWithScope(detailEvidence),
     ...historyEvidenceWithScope(evidenceData),
   ].map((row) => [cleanText(row.id, 40), row])).values());
   result.evidence = allEvidence;
-  result.revision = { status: evidencePolicy === "none" ? "not_required"
-    : evidencePolicy === "source_report" ? "source_report"
-      : allEvidence.length ? "matched" : "missing_evidence", source_amount: current.amount, delta: 0 };
+  const missingRequiredDetails = matchedWithRules.filter((detail) => cleanText(detail.evidence_policy, 30) !== "none" && !detail.has_evidence);
+  const allDetailsNotRequired = matchedWithRules.length > 0 && matchedWithRules.every((detail) => cleanText(detail.evidence_policy, 30) === "none");
+  result.revision = { status: matchedWithRules.length
+    ? allDetailsNotRequired ? "not_required" : missingRequiredDetails.length ? "missing_evidence" : "matched"
+    : evidencePolicy === "none" ? "not_required"
+      : evidencePolicy === "source_report" ? "source_report"
+        : allEvidence.length ? "matched" : "missing_evidence", source_amount: current.amount, delta: 0 };
   result.history_evidence_links = [...(evidenceData.links as JsonRecord[]), ...(detailEvidence.links as JsonRecord[])];
   result.daily_source_count = (dailyIncome.details as JsonRecord[]).length;
   result.daily_source_total = dailyIncome.total;
   result.daily_source_reconciled = dailyReconciled;
-  result.anomalies = evidencePolicy === "voucher_required" && !allEvidence.length ? ["missing_voucher"] : [];
+  result.anomalies = missingRequiredDetails.length || (!matchedWithRules.length && evidencePolicy === "voucher_required" && !allEvidence.length) ? ["missing_voucher"] : [];
   return result;
 }
 
@@ -2360,6 +2390,7 @@ async function cellTrace(payload: JsonRecord, session: JsonRecord): Promise<Json
     report: { ...report, uploaded_by: uploaderRows[0] || null },
     can_edit: cleanText(session.operations_role, 40) === "finance" && hasAuthCapability(session, "confirmed_finance.adjust"),
     can_upload_vouchers: canUploadVouchers(session),
+    can_manage_business_evidence_rules: cleanText(session.operations_role, 40) === "finance" && hasAuthCapability(session, "confirmed_finance.adjust"),
     can_manage_evidence_rules: hasAuthCapability(session, "finance_account.create"),
     evidence_policy: evidencePolicy,
     evidence_rule: ruleRows.find((rule) => cleanText(rule.cell_address, 20).toUpperCase() === address) || null,
@@ -2428,11 +2459,17 @@ async function cellTrace(payload: JsonRecord, session: JsonRecord): Promise<Json
   );
   result.business_details = businessDetails;
   result.business_total = Number(businessDetails.reduce((sum, row) => sum + Number(row.amount || 0), 0).toFixed(4));
-  if (evidencePolicy === "none") result.revision = { ...(revision || {}), status: "not_required" };
-  if (evidencePolicy === "source_report") result.revision = { ...(revision || {}),
+  const missingRequiredDetails = businessDetails.filter((detail) => cleanText(detail.evidence_policy, 30) !== "none"
+    && !(detail.vouchers as JsonRecord[] || []).length && !(detail.pending_vouchers as JsonRecord[] || []).length);
+  const allDetailsNotRequired = businessDetails.length > 0
+    && businessDetails.every((detail) => cleanText(detail.evidence_policy, 30) === "none");
+  if (businessDetails.length) result.revision = { ...(revision || {}),
+    status: allDetailsNotRequired ? "not_required" : missingRequiredDetails.length ? "missing_evidence" : "matched" };
+  if (!businessDetails.length && evidencePolicy === "none") result.revision = { ...(revision || {}), status: "not_required" };
+  if (!businessDetails.length && evidencePolicy === "source_report") result.revision = { ...(revision || {}),
     status: revision && cleanText(revision.status, 30) === "mismatch" ? "mismatch" : sources.length ? "source_report" : "unlinked" };
   const anomalies: string[] = [];
-  if (evidencePolicy === "voucher_required" && !evidence.length) anomalies.push("missing_voucher");
+  if (missingRequiredDetails.length || (!businessDetails.length && evidencePolicy === "voucher_required" && !evidence.length)) anomalies.push("missing_voucher");
   if (evidencePolicy === "source_report" && !sources.length) anomalies.push("missing_source_report");
   if (revision && cleanText(revision.status, 30) === "mismatch") anomalies.push("detail_total_mismatch");
   if (businessDetails.length && Math.abs(Number(result.business_total) - Number(effectiveTarget.numeric_value || 0)) > 0.01) {
@@ -2526,6 +2563,44 @@ async function saveMonthlyEvidenceRule(payload: JsonRecord, session: JsonRecord)
   }
   const saved = Array.isArray(data) ? data[0] : data;
   return { saved };
+}
+
+async function saveBusinessEvidenceRule(payload: JsonRecord, session: JsonRecord): Promise<JsonRecord> {
+  requireFinanceCapability(session, "confirmed_finance.adjust", "只有财务账号可以修改单笔凭证要求");
+  const store = await selectedStoreInfo(session, payload);
+  const reason = cleanText(payload.reason, 500);
+  if (!reason || typeof payload.evidence_required !== "boolean") {
+    throw new Error("请选择这笔记录是否需要凭证并填写原因");
+  }
+  const saved = await rpcSaved("rpc/zysyr_save_business_evidence_rule", {
+    p_actor_user_id: cleanText(session.auth_account_id, 40),
+    p_company_id: cleanText(store.company_id, 40),
+    p_store_id: cleanText(store.id, 40),
+    p_business_type: cleanText(payload.business_type, 60),
+    p_business_id: uuidValue(payload.business_id, "业务记录编号无效"),
+    p_evidence_required: payload.evidence_required,
+    p_reason: reason,
+  });
+  return { saved };
+}
+
+async function historyMonthlyCellSave(payload: JsonRecord, session: JsonRecord): Promise<JsonRecord> {
+  requireFinanceCapability(session, "confirmed_finance.adjust", "只有具备已确认财务调整权限的财务账号可以修改月报金额");
+  const store = await selectedStoreInfo(session, payload);
+  const amountText = cleanText(payload.after_amount, 100);
+  const reason = cleanText(payload.reason, 500);
+  if (!/^-?\d{1,14}(?:\.\d{1,4})?$/.test(amountText) || !reason) {
+    throw new Error("请填写有效金额和本次修改原因");
+  }
+  const saved = await rpcSaved("rpc/zysyr_revise_history_monthly_cell", {
+    p_actor_user_id: cleanText(session.auth_account_id, 40),
+    p_company_id: cleanText(store.company_id, 40),
+    p_store_id: cleanText(store.id, 40),
+    p_ledger_entry_id: uuidValue(payload.ledger_entry_id, "历史月报金额编号无效"),
+    p_after_amount: amountText,
+    p_reason: reason,
+  });
+  return { saved, formal_ledger_written: true };
 }
 
 async function reportUrl(payload: JsonRecord, session: JsonRecord): Promise<JsonRecord> {
@@ -4623,6 +4698,7 @@ Deno.serve(async (request: Request) => {
     if (operation === "report_acknowledge") return json(await reportAcknowledge(payload, session));
     if (operation === "monthly_summary") return json(await monthlySummary(payload, session));
     if (operation === "monthly_cell_save") return json(await monthlyCellSave(payload, session));
+    if (operation === "history_monthly_cell_save") return json(await historyMonthlyCellSave(payload, session));
     if (operation === "monthly_cell_unlock_request") return json(await requestMonthlyCellUnlock(payload, session));
     if (operation === "monthly_cell_unlock_decide") return json(await decideMonthlyCellUnlock(payload, session));
     if (operation === "shareholder_registration_list") return json(await shareholderRegistrationList(payload, session));
@@ -4639,6 +4715,7 @@ Deno.serve(async (request: Request) => {
     if (operation === "cell_trace") return json(await cellTrace(payload, session));
     if (operation === "cell_trace_save") return json(await saveCellTrace(payload, session));
     if (operation === "monthly_evidence_rule_save") return json(await saveMonthlyEvidenceRule(payload, session));
+    if (operation === "business_evidence_rule_save") return json(await saveBusinessEvidenceRule(payload, session));
     if (operation === "report_url") return json(await reportUrl(payload, session));
     if (operation === "finance_workbench") return json(await financeWorkbench(payload, session));
     if (operation === "petty_cash_report") return json(await pettyCashReport(payload, session));
