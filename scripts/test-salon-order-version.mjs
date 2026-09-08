@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {orderEditVersion} from '../packages/salon-core/api-client.mjs';
+for(const value of [undefined,null,'0',-1,1.2,2147483648,NaN])assert.throws(()=>orderEditVersion(value));
+assert.equal(orderEditVersion(0),0);assert.equal(orderEditVersion(2147483647),2147483647);
+const sql=fs.readFileSync('supabase/migrations/20260908023757_salon_order_edit_version.sql','utf8');
+assert.doesNotMatch(sql,/security definer/i);assert.match(sql,/before update on public.salon_orders/);assert.match(sql,/after insert or update or delete on public.salon_order_lines/);
+assert.ok(sql.indexOf('return v_request.response_json')<sql.indexOf('v_order.edit_version<>p_expected_version'));
+assert.ok(sql.indexOf('v_order.edit_version<>p_expected_version')<sql.indexOf('delete from public.salon_order_lines'));
+assert.match(sql,/'p_expected_version',p_expected_version/);
+console.log('Order version contract passed: strict integer token, no definer, complete fingerprint, replay before CAS and CAS before replacement');

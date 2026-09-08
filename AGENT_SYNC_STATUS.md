@@ -1,5 +1,13 @@
 # Agent Sync Status
 
+## Salon 订单明细并发版本（2026-09-08）
+
+- CLI 创建 20260908023757_salon_order_edit_version.sql：edit_version、订单/明细触发器和 versioned 明细入口。锁定订单后在删除前比较版本；完整员工指纹包含版本，成功重试先返回历史结果。新入口兼容原计算/权限/审计，不接旧 App。
+- API order_lines 强制 expectedVersion；工作台从当前记录取得并冻结，首次明确冲突禁用保存、不自动换版本。旧 service_role-only 明细函数保留内部兼容但不能作为新页面入口，上线前须收敛调用；详见 docs/salon-order-edit-version.md。
+- 已通过并发 PG/1280/390 专项、全部 JS/MJS、正常工作台、只读核对/两类恢复/整单明细核对，以及资金/主数据/顾客事务回归；专用容器由脚本清理。覆盖计数为 42 个带请求号员工函数，不是 42 个模块。
+- 按 Supabase/PostgreSQL 技能核对官方文档、最小权限和行锁；本地 Advisor 因默认实例未运行未完成，未改连生产。临时 PG 测试不等于正式 Auth/Edge/Advisor 验收。
+- 当日备份已确认，v478、feature/meiguanjia-parity-v1；不推 main、不部署、不合并旧 App、不访问真实业务数据。多项目编辑、订单列表、收银闭环及正式登录仍未完成。
+
 ## Salon 保存后整单明细核对（2026-09-08）
 
 - 新 order-readback.mjs：基于严格订单投影校验范围、完整明细多重集合；catalogItemId/quantity/unitPrice/discountAmount/staffId 匹配，不按名称、不去重同项目、不依赖返回行序。数量用整数千分位比较、金额用整数分比较，不重算服务端总计。

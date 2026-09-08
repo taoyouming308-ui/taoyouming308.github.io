@@ -10,6 +10,8 @@ Ctrl+C 正常退出会删除该容器和其中合成数据。强制杀进程或�
 
 ## 本批验证链路
 
+订单明细保存现要求读取时的编辑版本，并在数据库内原子比较。冲突关闭当前保存，不自动刷新版本覆盖；该保护不是多项目编辑器，细节及内部兼容边界见 `salon-order-edit-version.md`。
+
 页面 → 统一客户端 → 本机 HTTP → 实际 `createSalonHandler` → `service_role` → 实际 PostgreSQL RPC。
 
 1. 显式连接本机测试身份，读取授权门店。

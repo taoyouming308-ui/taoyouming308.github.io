@@ -16,6 +16,10 @@ export function amountToCents(value) {
   if (cents > BigInt(Number.MAX_SAFE_INTEGER)) fail('INVALID_AMOUNT', '金额超出安全范围');
   return Number(cents);
 }
+export function orderEditVersion(value){
+  if(!Number.isInteger(value)||value<0||value>2147483647)fail('INVALID_VERSION','订单编辑版本无效，请只读核对原订单');
+  return value;
+}
 export function mapRows(resource, rows, scope) {
   if (!Array.isArray(rows)) fail('INVALID_RESPONSE', '接口列表格式无效');
   const base = { organizationId: serverId(scope.organizationId), storeId: serverId(scope.storeId) };

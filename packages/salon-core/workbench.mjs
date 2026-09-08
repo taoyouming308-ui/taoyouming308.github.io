@@ -1,4 +1,4 @@
-import {mapRows,serverId} from './api-client.mjs';
+import {mapRows,serverId,orderEditVersion} from './api-client.mjs';
 import {createSalonSession} from './session-controller.mjs';
 import {withRequestDeadline} from './request-deadline.mjs';
 import {createRecoveryJournal,recoverableOperations} from './recovery-journal.mjs';
@@ -9,6 +9,7 @@ let timeZone=null,timeVersion=null;
 const $=id=>document.getElementById(id);
 let client,customers=[],items=[],cancelRequests=[],rescheduleRequests=[],orderId=null,retry=null,viewRevision=0,signingOut=false,logoutUnconfirmed=false;
 let journalFault=false,running=false;
+let orderVersion=null;
 const status=text=>{$('status').textContent=text;};
 const journal=()=>createRecoveryJournal(()=>sessionStorage,client.scope);
 function renderRecovery(){
@@ -30,7 +31,7 @@ function options(id,rows,label){
  const select=$(id);select.replaceChildren(new Option('请选择',''));
  for(const row of rows)select.add(new Option(label(row),String(row.id)));
 }
-function clear(){timeZone=null;$('timeZone').textContent='门店时区未加载';options('changeRequest',[],()=>{});$('changeReason').value='';customers=[];items=[];cancelRequests=[];rescheduleRequests=[];orderId=null;retry=null;options('customer',[],()=>{});options('item',[],()=>{});options('cancelRequest',[],()=>{});options('rescheduleRequest',[],()=>{});$('rescheduleStart').value='';$('rescheduleReason').value='';$('cancelReason').value='';$('order').textContent='尚未创建订单';$('saveLines').disabled=true;}
+function clear(){timeZone=null;$('timeZone').textContent='门店时区未加载';options('changeRequest',[],()=>{});$('changeReason').value='';customers=[];items=[];cancelRequests=[];rescheduleRequests=[];orderId=null;orderVersion=null;retry=null;options('customer',[],()=>{});options('item',[],()=>{});options('cancelRequest',[],()=>{});options('rescheduleRequest',[],()=>{});$('rescheduleStart').value='';$('rescheduleReason').value='';$('cancelReason').value='';$('order').textContent='尚未创建订单';$('saveLines').disabled=true;}
 async function refresh(){
  timeZone=null;$('timeZone').textContent='正在读取门店时区';
  const config=await client.read('store_time');
@@ -69,6 +70,7 @@ async function mutate(operation,fields,onSuccess){
  retry=async()=>{
   let result;
   try{result=await client.submit(ticket);}catch(error){
+   if(operation==='order_lines'&&error.message.includes('订单版本已变化')){$('saveLines').disabled=true;orderVersion=null;}
    // A later rejection cannot prove an earlier unknown submission did not commit.
    if(error.code==='API_REJECTED'&&error.httpStatus>=400&&error.httpStatus<500){
     retry=null;if(tracked&&!hadUnknownResult)try{pendingJournal.acknowledge(ticket);}catch(e){journalFault=true;throw e;}
@@ -137,16 +139,17 @@ $('createOrder').onclick=()=>run(async()=>{
  await mutate('order_create',{customerId:selected.id,notes:'本机合成接口联调'},async data=>{
   const id=serverId(data.orderId),result=await client.read('order_detail',{orderId:id});
   if(serverId(result.data?.order?.id)!==id)throw Error('订单回读与创建对象不一致，请核对原订单');
-  orderId=id;$('order').textContent=`订单 ${id} · ${result.data.order.status}`;$('saveLines').disabled=result.data.order.status!=='draft';
+  orderVersion=orderEditVersion(result.data.order.edit_version);orderId=id;$('order').textContent=`订单 ${id} · ${result.data.order.status}`;$('saveLines').disabled=result.data.order.status!=='draft';
   status('订单已创建并读取确认。');
  });
 });
 $('saveLines').onclick=()=>run(async()=>{
  const selected=items.find(row=>row.id===Number($('item').value));if(!selected||!orderId)throw Error('请选择本店商品并先创建草稿');
  const lines=[{catalogItemId:selected.id,quantity:1,unitPrice:selected.listPriceCents/100,discountAmount:0}];
- await mutate('order_lines',{orderId,lines},async()=>{
+ await mutate('order_lines',{orderId,lines,expectedVersion:orderEditVersion(orderVersion)},async()=>{
   const result=await client.read('order_detail',{orderId});
   verifyOrderLines(result.data,orderId,client.scope,lines);
+  orderVersion=orderEditVersion(result.data.order.edit_version);
   $('order').textContent=`订单 ${orderId} · 明细已从数据库读取确认`;
   $('saveLines').disabled=result.data.order.status!=='draft';
   status(`明细已保存并读取验证 · 追踪号 ${result.requestId}`);
@@ -174,11 +177,12 @@ $('lookupRequest').onclick=()=>run(async()=>{
  if(expectedType==='order'){
   recoveredOrder=(await client.read('order_detail',{orderId:id})).data;
   if(serverId(recoveredOrder?.order?.id)!==id)throw Error('订单现状核对失败，原请求继续保留。');
+  orderEditVersion(recoveredOrder.order.edit_version);
  }
  await refresh();
  if(expectedType==='customer'&&!customers.some(row=>row.id===id))throw Error('历史建档已完成，但当前列表未找到顾客，请人工核对；原请求保留。');
  try{pendingJournal.acknowledge(ticket);}catch(error){journalFault=true;throw error;}
- if(recoveredOrder){orderId=id;$('order').textContent=`已恢复订单 ${id} · 当前状态 ${recoveredOrder.order.status}`;$('saveLines').disabled=recoveredOrder.order.status!=='draft';}
+ if(recoveredOrder){orderVersion=orderEditVersion(recoveredOrder.order.edit_version);orderId=id;$('order').textContent=`已恢复订单 ${id} · 当前状态 ${recoveredOrder.order.status}`;$('saveLines').disabled=recoveredOrder.order.status!=='draft';}
  else $('customer').value=String(id);
  status('已核对原请求并读取当前记录，没有重新提交业务。');
 });

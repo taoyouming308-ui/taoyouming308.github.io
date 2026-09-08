@@ -31,7 +31,7 @@ const {startServer}=require('./salon-local-integration.cjs');
  const orderReceipt=await read(orderTicket.requestKey,'order_create');
  assert.equal(orderReceipt.status,'committed');assert.equal(orderReceipt.resourceType,'order');
  const orderId=Number(orderReceipt.resourceId);
- const linesTicket=client.prepare('order_lines',{orderId,lines:[{catalogItemId:1,quantity:1,unitPrice:12.34,discountAmount:0}]});
+ const linesTicket=client.prepare('order_lines',{orderId,expectedVersion:(await client.read('order_detail',{orderId})).data.order.edit_version,lines:[{catalogItemId:1,quantity:1,unitPrice:12.34,discountAmount:0}]});
  await client.submit(linesTicket);
  const before=snapshot();
  for(const [ticket,type,id] of [[customerTicket,'customer',customer.customerId],[orderTicket,'order',orderId],[linesTicket,'order',orderId]]){
