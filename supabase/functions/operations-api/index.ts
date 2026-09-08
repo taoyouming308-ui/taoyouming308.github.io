@@ -2317,12 +2317,19 @@ async function historicalCellTrace(companyId: string, storeId: string, reportId:
   const dailyIncome = await historicalDailyIncomeSources(companyId, storeId, month, cleanText(current.label, 300));
   const dailyReconciled = (dailyIncome.details as JsonRecord[]).length > 0
     && Math.abs(Number(dailyIncome.total || 0) - Number(current.amount || 0)) <= 0.01;
-  const matched = dailyReconciled ? dailyIncome.details as JsonRecord[] : ledgerMatched;
+  const matched = dailyReconciled ? dailyIncome.details as JsonRecord[] : ledgerMatched.length ? ledgerMatched : [{
+    business_type: "history_monthly_profit_loss", business_id: entry.id,
+    history_ledger_entry_id: entry.id, date: `${month}-01`, title: cleanText(current.label, 300) || address,
+    description: `月报直接录入 · ${locator}`, amount: current.amount,
+    source_locator: locator, import_row_id: entry.import_row_id,
+  }];
   const detailEvidence = ledgerMatched.length ? await historyEvidenceForEntries(companyId, storeId, moduleEntries.filter((row) => ledgerMatched.some((detail) => detail.business_id === row.id))) : { links: [], evidence: [] };
   const detailLinks = detailEvidence.links as JsonRecord[];
   const matchedWithEvidence = matched.map((detail) => ({ ...detail,
     has_evidence: cleanText(detail.business_type, 60) === "daily_sheet"
       ? Boolean(detail.source_voucher_id)
+      : cleanText(detail.business_type, 60) === "history_monthly_profit_loss"
+        ? Boolean((evidenceData.evidence as JsonRecord[]).length)
       : detailLinks.some((link) => cleanText(link.import_row_id, 40) === cleanText(detail.import_row_id, 40)),
   }));
   const matchedWithRules = await businessEvidenceRulesForDetails(companyId, storeId, matchedWithEvidence);
@@ -2454,9 +2461,17 @@ async function cellTrace(payload: JsonRecord, session: JsonRecord): Promise<Json
   result.revision = revision;
   result.sources = sources;
   result.evidence = evidence;
-  const businessDetails = await monthlyCellBusinessDetails(
+  let businessDetails = await monthlyCellBusinessDetails(
     companyId, storeId, cleanText(report.report_date, 10), target.label,
   );
+  if (!businessDetails.length && !sources.length) {
+    businessDetails = await businessEvidenceRulesForDetails(companyId, storeId, [{
+      business_type: "report_cell", business_id: target.id,
+      business_date: cleanText(report.report_date, 10), category: cleanText(target.label, 300) || address,
+      description: `月报直接录入 · ${address}`, amount: effectiveTarget.numeric_value,
+      status: "confirmed", vouchers: evidence, pending_vouchers: [], has_evidence: Boolean(evidence.length),
+    }]);
+  }
   result.business_details = businessDetails;
   result.business_total = Number(businessDetails.reduce((sum, row) => sum + Number(row.amount || 0), 0).toFixed(4));
   const missingRequiredDetails = businessDetails.filter((detail) => cleanText(detail.evidence_policy, 30) !== "none"

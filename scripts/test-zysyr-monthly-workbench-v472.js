@@ -8,13 +8,14 @@ const page = fs.readFileSync(path.join(root, 'operations.html'), 'utf8');
 const api = fs.readFileSync(path.join(root, 'supabase/functions/operations-api/index.ts'), 'utf8');
 const migration = fs.readFileSync(path.join(root, 'supabase/migrations/20260905073551_zysyr_monthly_evidence_workbench.sql'), 'utf8');
 const detailMigration = fs.readFileSync(path.join(root, 'supabase/migrations/20260908023351_zysyr_monthly_cell_detail_workbench.sql'), 'utf8');
+const directCellRuleMigration = fs.readFileSync(path.join(root, 'supabase/migrations/20260908034635_zysyr_report_cell_evidence_rule.sql'), 'utf8');
 const directEvidence = fs.readFileSync(path.join(root, 'supabase/migrations/20260906122116_zysyr_history_monthly_direct_evidence.sql'), 'utf8');
 const releaseVersion = fs.readFileSync(path.join(root, 'version.txt'), 'utf8').trim();
 function expect(value, message) { if (!value) throw new Error(message); }
 
 for (const marker of [
   '上传原表 / 凭证', 'monthly-material-form', '金额处理',
-  '上传这个数字的凭证', '修改这个金额', 'monthly-inline-amount', '上传凭证图片 / PDF',
+  '上传这个数字的凭证', '编辑金额', 'monthly-inline-amount', '预览修改', '确认保存', '上传凭证图片 / PDF',
   '逐笔收入 / 开支与凭证', '此笔不需要凭证（只影响这一笔）', 'business_evidence_rule_save',
   'report-focus', 'minReadable=phone ? .68 : .7',
 ]) expect(page.includes(marker), `monthly workbench UI missing: ${marker}`);
@@ -25,9 +26,12 @@ expect(page.includes("report_type:type,report_date:date,month:$('month').value")
   && page.includes('日报日期必须属于当前月份'), 'monthly materials must remain scoped to the active store and month');
 expect(page.includes("cell.onclick=function(){openMonthlyVoucher(cell.dataset.traceCell)}")
   && page.includes("typeof value==='number'"), 'only numeric report amounts should open the monthly workbench');
-expect(page.includes("state.user.role!=='finance'||!data.can_upload_vouchers")
-  && !page.includes("state.user.role!=='finance'||!data.can_upload_vouchers||data.evidence_policy==='none'"),
+expect(page.includes("classList.toggle('hidden',!data.can_upload_vouchers)")
+  && !page.includes("!data.can_upload_vouchers||data.evidence_policy==='none'"),
   'finance must still be able to upload an optional voucher after one detail is waived');
+expect(page.includes('monthly-inline-preview-button') && page.includes('save.dataset.previewAmount')
+  && page.includes("toast('金额已经变化，请重新预览')"),
+  'amount changes must be previewed and revalidated before confirmation');
 expect(page.includes("api('history_monthly_cell_save'") && api.includes('async function historyMonthlyCellSave(')
   && api.includes('rpc/zysyr_revise_history_monthly_cell'),
   'historical monthly input must use the amount-only revision path from the detail page');
@@ -91,6 +95,17 @@ expect(detailMigration.includes("v_cell_kind = 'formula'")
   && detailMigration.includes('MONTHLY_UNLOCK_APPROVAL_REQUIRED')
   && detailMigration.includes("'{amount}'"),
   'historical amount correction must reject formulas, respect locks and only replace amount');
+expect(directCellRuleMigration.includes("'report_cell'")
+  && directCellRuleMigration.includes("report.report_type = 'monthly_profit_loss'")
+  && directCellRuleMigration.includes("coalesce(cell.cell_kind, '') <> 'formula'"),
+  'a direct monthly input may waive evidence only for its own verified non-formula report cell');
+expect(/revoke execute on function public\.zysyr_save_business_evidence_rule[\s\S]*?from public, anon, authenticated/.test(directCellRuleMigration)
+  && /grant execute on function public\.zysyr_save_business_evidence_rule[\s\S]*?to service_role/.test(directCellRuleMigration),
+  'direct report-cell evidence rule remains server-only');
+expect(api.includes('business_type: "history_monthly_profit_loss"')
+  && api.includes('business_type: "report_cell"')
+  && api.includes('if (!businessDetails.length && !sources.length)'),
+  'direct historical and current monthly inputs must appear as one independently controlled record');
 
 const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)];
 expect(scripts.length === 1, 'inline script missing');
