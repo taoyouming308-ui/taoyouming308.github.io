@@ -10,6 +10,7 @@
 <fieldset id="panel" disabled>
 <p id="timeZone">门店时区未加载</p>
 <button id="refresh">刷新本店数据</button>
+<section><h2>原单查询（只读）</h2><label>订单内部编号<input id="inspectOrderId" inputmode="numeric" maxlength="16" autocomplete="off" placeholder="输入已知订单的整数 ID，不是业务单号"></label><button id="inspectOrder">查询原单</button><p>仅查询当前授权门店。结果不是实时订阅，状态可能随后变化；存在待核对写入时，请先处理上方原请求。</p><div id="orderInspection" aria-live="polite" style="overflow-wrap:anywhere"></div></section>
 <section><h2>顾客改期申请复核</h2><label>本店待处理申请<select id="changeRequest"></select></label><p id="changeDetails" style="overflow-wrap:anywhere">选择申请后查看原时间、新时间与申请原因。</p><label>复核原因<input id="changeReason" maxlength="500" autocomplete="off"></label><nav><button id="approveChange">批准改期</button><button id="rejectChange">拒绝改期</button></nav><p>待处理期间保留原档期，批准时重新检查冲突。<a href="/customer" target="_blank" rel="noopener" style="color:#c3eab2">打开独立合成顾客测试页</a></p></section>
 <section><h2>1 · 选择门店</h2><label>授权门店<select id="store"></select></label><small>切店清空顾客、项目和订单选择，不按姓名匹配跨店对象。</small></section>
 <section><h2>2 · 顾客建档</h2><label>合成顾客姓名<input id="name" maxlength="100" value="本机测试顾客" autocomplete="off"></label><button id="createCustomer">建立合成顾客</button><label>当前门店顾客<select id="customer"></select></label></section>

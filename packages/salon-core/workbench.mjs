@@ -2,6 +2,7 @@ import {mapRows,serverId} from './api-client.mjs';
 import {createSalonSession} from './session-controller.mjs';
 import {withRequestDeadline} from './request-deadline.mjs';
 import {createRecoveryJournal,recoverableOperations} from './recovery-journal.mjs';
+import {inspectOrder,renderOrderInspection} from './order-inspection.mjs';
 import {instantToStoreInput,storeTimeToInstant,formatStoreInstant,storeTimeContext} from './store-time.mjs';
 let timeZone=null,timeVersion=null;
 const $=id=>document.getElementById(id);
@@ -23,6 +24,7 @@ function renderRecovery(){
  }catch(error){journalFault=true;$('panel').disabled=true;$('recoveryStatus').textContent=error.message;}
 }
 function options(id,rows,label){
+ if(id==='customer'){$('inspectOrderId').value='';$('orderInspection').replaceChildren();}
  if(id==='changeRequest')$('changeDetails').textContent='选择申请后查看原时间、新时间与申请原因。';
  const select=$(id);select.replaceChildren(new Option('请选择',''));
  for(const row of rows)select.add(new Option(label(row),String(row.id)));
@@ -57,6 +59,7 @@ async function run(action){
  finally{running=false;if(epoch===viewRevision){$('panel').disabled=!client?.scope||Boolean(retry);$('connect').disabled=Boolean(retry);$('retry').disabled=!retry;$('logout').disabled=!client?.scope;for(const id of ['rescheduleRequest','rescheduleStart','rescheduleBooking','changeRequest','approveChange','rejectChange'])$(id).disabled=!timeZone;renderRecovery();}}
 }
 async function mutate(operation,fields,onSuccess){
+ $('orderInspection').replaceChildren();
  if(journalFault||journal().list().length)throw Error('待核对清单未解决，禁止新建业务。');
  const ticket=client.prepare(operation,fields);
  const tracked=recoverableOperations.includes(operation),pendingJournal=journal();
@@ -148,6 +151,13 @@ $('saveLines').onclick=()=>run(async()=>{
  });
 });
 $('retry').onclick=()=>run(async()=>{if(retry)await retry();});
+$('inspectOrder').onclick=()=>run(async()=>{
+ $('orderInspection').replaceChildren();
+ const id=serverId($('inspectOrderId').value),result=await client.read('order_detail',{orderId:id});
+ renderOrderInspection($('orderInspection'),inspectOrder(result.data,id,client.scope));
+ status('原单已只读查询；未修改订单或当前编辑对象。');
+});
+$('inspectOrderId').oninput=()=>{$('orderInspection').replaceChildren();};
 $('lookupRequest').onclick=()=>run(async()=>{
  if(retry||journalFault)throw Error('请先处理本页原请求或存储异常。');
  const pendingJournal=journal(),ticket=pendingJournal.list().find(r=>r.requestKey===$('recoveryRequest').value);
